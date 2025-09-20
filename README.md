@@ -1,0 +1,26 @@
+# Filtro Avançado (configurável por contexto) — v3
+
+Compatível com **Python 3.9+** (sem usar `|` nos tipos).
+
+## Como usar (CLI)
+```bash
+pip install -r requirements.txt
+# do diretório raiz do projeto (onde está a pasta advanced_filter/)
+python -m advanced_filter.cli --input exemplos/exemplo.csv --config exemplos/config_template.yaml --out saida.xlsx
+```
+
+## Como usar (Streamlit)
+```bash
+# execute a partir do diretório raiz do projeto
+streamlit run advanced_filter/ui_streamlit.py
+```
+> O arquivo `ui_streamlit.py` tem **fallback de import** para funcionar como script.
+
+## Instalação opcional como pacote
+```bash
+pip install -e .
+# depois pode chamar de qualquer pasta:
+python -m advanced_filter.cli --input ... --config ...
+```
+
+Gerado em 2025-09-20.

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "advanced-filter-context"
+version = "0.1.2"
+description = "Filtro avançado configurável por contexto (positivos/negativos/DSL)."
+readme = "README.md"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+# 👇 diz explicitamente quais pacotes serão instalados
+packages = ["advanced_filter"]
+
+# (opcional) se quiser manter arquivos de exemplo fora do pacote
+[tool.setuptools.exclude-package-data]
+"*" = ["exemplos/*", "examples/*", "docs/*", "tests/*"]

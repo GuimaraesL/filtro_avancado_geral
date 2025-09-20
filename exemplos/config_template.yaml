@@ -1,0 +1,51 @@
+language: pt
+normalization:
+  lowercase: true
+  strip_accents: true
+  lemmatize: false
+
+tokenization:
+  type: "simple"
+
+matchers:
+  positives:
+    - {pattern: "luva", type: "literal", weight: 2.0}
+    - {pattern: "proteção das mãos", type: "phrase", weight: 3.0}
+    - {pattern: "\\bEPI(s)?\\b", type: "regex", weight: 2.0}
+  negatives:
+    - {pattern: "contramão", type: "literal", weight: 5.0}
+  contexts:
+    MÃOS:
+      - {pattern: "mão", type: "literal"}
+      - {pattern: "mãos", type: "literal"}
+      - {pattern: "dedo", type: "literal"}
+    FERRAMENTAS_MANUAIS:
+      - {pattern: "martelo", type: "literal"}
+      - {pattern: "alicate", type: "literal"}
+      - {pattern: "chave de fenda", type: "phrase"}
+    EQUIPAMENTOS_BLOQUEIO:
+      - {pattern: "moinho de martelos", type: "phrase"}
+
+scoring:
+  default_positive_weight: 1.0
+  default_negative_weight: 1.0
+  context_weight: 0.5
+
+rules:
+  - name: "Maos_e_Ferramenta"
+    equation: "WITHIN(8, POS(), CTX('MÃOS')) and WITHIN(8, POS(), CTX('FERRAMENTAS_MANUAIS')) and not CTX('EQUIPAMENTOS_BLOQUEIO')"
+    min_score: 3.0
+    decision: "INCLUI"
+    assign_category: "Segurança > Proteção das Mãos"
+
+  - name: "Regra_Negativa_Contramao"
+    equation: "ANY(NEG())"
+    decision: "EXCLUI"
+
+  - name: "Revisar_So_Contexto_Maos"
+    equation: "ANY(CTX('MÃOS')) and not ANY(POS())"
+    decision: "REVISA"
+
+output:
+  assign_first_matching_rule: true
+  audit_fields: [matches, windows, rule_fired, reason, category]
