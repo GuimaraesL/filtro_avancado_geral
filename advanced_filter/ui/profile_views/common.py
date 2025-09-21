@@ -1,10 +1,7 @@
-﻿
-# -*- coding: utf-8 -*-
-from __future__ import annotations
+﻿# -*- coding: utf-8 -*-
 import streamlit as st
 
 def rerun_safe():
-    """Rerun compatível com versões antigas/novas do Streamlit."""
     try:
         st.rerun()
     except Exception:

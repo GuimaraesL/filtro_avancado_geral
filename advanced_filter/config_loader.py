@@ -1,13 +1,35 @@
 ﻿# -*- coding: utf-8 -*-
-# v2 ONLY loader — mantém o nome público "load_config" para compatibilidade
+"""
+Carregador de configuração (MODO BÁSICO ÚNICO).
+
+Esquema esperado (YAML):
+version: basic-1            # opcional (default basic-1)
+normalization:
+  lowercase: true
+  strip_accents: true
+window: 8                   # janela de proximidade (em tokens)
+require_context: false      # exige contexto para decidir
+negative_wins_ties: true    # em empate, negativo vence
+min_pos_to_include: 1
+min_neg_to_exclude: 1
+positives:                  # lista de strings (palavras ou frases)
+  - termo1
+negatives:
+  - termo2
+contexts:
+  - termo3
+"""
 from __future__ import annotations
 from typing import Any, Dict, List
-import io
 import yaml
 
-# --- helpers simples ---
+# -------- Helpers --------
 def _as_bool(x, default: bool) -> bool:
-    return bool(x) if isinstance(x, (bool, int)) else default
+    if isinstance(x, bool):
+        return x
+    if isinstance(x, int):
+        return bool(x)
+    return default
 
 def _as_int_pos(x, default: int) -> int:
     try:
@@ -16,104 +38,85 @@ def _as_int_pos(x, default: int) -> int:
     except Exception:
         return default
 
-def _ensure_dict(x) -> Dict[str, Any]:
-    return x if isinstance(x, dict) else {}
+def _as_int_nonneg(x, default: int) -> int:
+    try:
+        v = int(x)
+        return v if v >= 0 else default
+    except Exception:
+        return default
 
-def _ensure_list(x) -> List[Any]:
-    return x if isinstance(x, list) else []
-
-def _require(cond: bool, msg: str):
-    if not cond:
-        raise ValueError(msg)
-
-def _validate_pattern(p: Dict[str, Any]) -> Dict[str, Any]:
-    _require("pattern" in p and isinstance(p["pattern"], str) and p["pattern"].strip(),
-             "Cada matcher precisa de 'pattern' (string não vazia).")
-    out: Dict[str, Any] = {
-        "pattern": p["pattern"].strip(),
-        "type": (p.get("type") or "literal").strip(),
-    }
-    if "weight" in p and p["weight"] is not None and str(p["weight"]).strip() != "":
-        try:
-            out["weight"] = float(p["weight"])
-        except Exception:
-            pass
-    if "tag" in p and p["tag"] is not None and str(p["tag"]).strip() != "":
-        out["tag"] = str(p["tag"]).strip()
+def _as_list_str(x) -> List[str]:
+    out: List[str] = []
+    if isinstance(x, list):
+        for item in x:
+            if item is None:
+                continue
+            if isinstance(item, (int, float)):
+                s = str(item)
+            else:
+                s = str(item)
+            s = s.strip()
+            if s:
+                out.append(s)
+    elif isinstance(x, str):
+        s = x.strip()
+        if s:
+            out = [line.strip() for line in s.splitlines() if line.strip()]
     return out
 
-def _validate_contexts(ctxs: Dict[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for g, body in (_ensure_dict(ctxs)).items():
-        if not isinstance(g, str) or not g.strip():
-            continue
-        b = _ensure_dict(body)
-        cat = b.get("category")
-        cat = str(cat).strip() if isinstance(cat, str) else None
-        pats = []
-        for p in _ensure_list(b.get("patterns")):
-            if isinstance(p, dict):
-                pats.append(_validate_pattern(p))
-        out[g] = {"category": cat, "patterns": pats}
-    return out
+# -------- Loader --------
+def load_config(yaml_bytes: bytes) -> Dict[str, Any]:
+    """
+    Carrega bytes YAML e normaliza para o dicionário do modo básico.
+    Não há suporte a versões antigas; essa é a ÚNICA fonte de verdade.
+    """
+    try:
+        raw = yaml.safe_load(yaml_bytes.decode('utf-8')) if isinstance(yaml_bytes, (bytes, bytearray)) else {}
+        if raw is None:
+            raw = {}
+    except Exception:
+        raw = {}
 
-# --- loader v2 (única fonte) ---
-def load_config_v2_from_bytes(yaml_bytes: bytes) -> Dict[str, Any]:
-    if not yaml_bytes:
-        raise ValueError("YAML vazio.")
-    data = yaml.safe_load(io.BytesIO(yaml_bytes).read()) or {}
-    _require(isinstance(data, dict), "Estrutura YAML inválida.")
-
-    _require("matchers" in data, "Config YAML deve estar em v2 (com a chave 'matchers').")
-    matchers = _ensure_dict(data.get("matchers"))
-
-    norm = _ensure_dict(data.get("normalization"))
-    window = _as_int_pos(data.get("window", 8), 8)
-
-    positives = [_validate_pattern(p) for p in _ensure_list(matchers.get("positives")) if isinstance(p, dict)]
-    negatives = [_validate_pattern(p) for p in _ensure_list(matchers.get("negatives")) if isinstance(p, dict)]
-    contexts  = _validate_contexts(matchers.get("contexts"))
-
-    rules = []
-    for r in _ensure_list(data.get("rules")):
-        if not isinstance(r, dict):
-            continue
-        name = str(r.get("name") or "").strip()
-        eq   = str(r.get("equation") or "").strip()
-        dec  = str(r.get("decision") or "").strip().upper()
-        if not name or not eq or dec not in {"INCLUI", "REVISA", "EXCLUI"}:
-            continue
-        rr = {"name": name, "equation": eq, "decision": dec}
-        if "min_score" in r and r.get("min_score") not in (None, ""):
-            try:
-                rr["min_score"] = float(r["min_score"])
-            except Exception:
-                pass
-        if "assign_category" in r and r.get("assign_category"):
-            rr["assign_category"] = str(r["assign_category"]).strip()
-        rules.append(rr)
-
-    return {
+    norm = raw.get('normalization') or {}
+    cfg: Dict[str, Any] = {
+        "version": "basic-1",
         "normalization": {
             "lowercase": _as_bool(norm.get("lowercase"), True),
             "strip_accents": _as_bool(norm.get("strip_accents"), True),
         },
-        "window": window,
-        "matchers": {
-            "positives": positives,
-            "negatives": negatives,
-            "contexts": contexts,
-        },
-        "rules": rules,
+        "window": _as_int_pos(raw.get("window"), 8),
+        "require_context": _as_bool(raw.get("require_context"), False),
+        "negative_wins_ties": _as_bool(raw.get("negative_wins_ties"), True),
+        "min_pos_to_include": _as_int_pos(raw.get("min_pos_to_include"), 1),
+        "min_neg_to_exclude": _as_int_pos(raw.get("min_neg_to_exclude"), 1),
+        "positives": _as_list_str(raw.get("positives")),
+        "negatives": _as_list_str(raw.get("negatives")),
+        "contexts":  _as_list_str(raw.get("contexts")),
+        # Campos opcionais
+        "name": str(raw.get("name") or "").strip() or None,
+        "notes": str(raw.get("notes") or "").strip() or None,
     }
+    return cfg
 
-# --- alias com o nome esperado pelos módulos existentes ---
-def load_config(yaml_bytes: bytes) -> Dict[str, Any]:
-    """Alias: mantém nome antigo, carregando SEMPRE em v2."""
-    return load_config_v2_from_bytes(yaml_bytes)
-
-# --- util para exportar YAML v2 a partir de um dict já validado ---
 def config_dict_to_yaml_bytes(cfg: Dict[str, Any]) -> bytes:
-    return yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False).encode("utf-8")
+    """Serializa o dicionário básico para YAML."""
+    serial = {
+        "version": "basic-1",
+        "name": cfg.get("name"),
+        "notes": cfg.get("notes"),
+        "normalization": {
+            "lowercase": bool(cfg.get("normalization", {}).get("lowercase", True)),
+            "strip_accents": bool(cfg.get("normalization", {}).get("strip_accents", True)),
+        },
+        "window": int(cfg.get("window", 8)),
+        "require_context": bool(cfg.get("require_context", False)),
+        "negative_wins_ties": bool(cfg.get("negative_wins_ties", True)),
+        "min_pos_to_include": int(cfg.get("min_pos_to_include", 1)),
+        "min_neg_to_exclude": int(cfg.get("min_neg_to_exclude", 1)),
+        "positives": list(cfg.get("positives") or []),
+        "negatives": list(cfg.get("negatives") or []),
+        "contexts":  list(cfg.get("contexts") or []),
+    }
+    return yaml.safe_dump(serial, allow_unicode=True, sort_keys=False).encode("utf-8")
 
-__all__ = ["load_config_v2_from_bytes", "load_config", "config_dict_to_yaml_bytes"]
+__all__ = ["load_config", "config_dict_to_yaml_bytes"]

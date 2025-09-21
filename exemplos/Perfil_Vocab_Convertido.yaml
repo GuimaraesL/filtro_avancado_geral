@@ -1,0 +1,85 @@
+version: basic-1
+name: Perfil_Vocab_Convertido
+notes: Gerado automaticamente a partir de vocab.py para o modo básico.
+normalization:
+  lowercase: true
+  strip_accents: true
+window: 8
+require_context: true
+negative_wins_ties: true
+min_pos_to_include: 1
+min_neg_to_exclude: 1
+positives:
+- risco de prensamento
+- prensamento
+- prensameto
+- risco camuflado de prensamento
+- pontos de prensamento
+- risco de machucar
+- machucar
+- corte
+- dedo proximo
+- mao embaixo da carga
+- sem luva
+- sem luvas
+- sem luva anti impacto
+- sem luvas anti impacto
+- protecao solta
+- cabo muito curto
+- puxador amassado
+- macaneta quebrada
+- tampa pesada
+- sem cabo de madeira
+- tubo metalico soldado
+- pontos de passagem expostos
+- risco de lesao
+- risco de prensamento de dedos
+- tampa pesada
+- sem cabo de madeira
+- tubo metalico soldado
+- pontos de passagem expostos
+- risco de lesao
+- risco de prensamento de dedos
+negatives:
+- check da ponte preenchido corretamente
+- preenchido corretamente
+- uso de bastao
+- utilizando todos os epis
+- operador utilizando todos os epis
+- uso de epi
+- uso de luva
+- luvas pigmentadas
+contexts:
+- dispositivo
+- estampo
+- chapa
+- ferramenta
+- cremalheira
+- work roll
+- wroll
+- ponte rolante
+- rolamento
+- porta superior
+- interstand
+- andaime
+- puxador
+- carrao
+- macaneta
+- alavanca
+- tampa
+- eixo
+- faca
+- base
+- cilindros
+- feed roll
+- pecas
+- marreta
+- cabo
+- guarda corpo
+- chumbadores
+- escova
+- suporte
+- mao
+- maos
+- dedo
+- dedos

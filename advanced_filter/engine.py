@@ -1,278 +1,222 @@
 ﻿# -*- coding: utf-8 -*-
-# advanced_filter/engine.py
 from __future__ import annotations
-from typing import Dict, Any, List
-import os
-import io
+from typing import Dict, Any, List, Tuple, Iterable, Optional, Union
 import re
-import unicodedata
-import yaml
 import pandas as pd
 
-# Loader v2 (única fonte). Mantém o código robusto caso o módulo não esteja disponível.
 try:
-    from .config_loader import load_config_v2_from_bytes  # v2 somente
+    from .config_loader import load_config
 except Exception:
-    def load_config_v2_from_bytes(yaml_bytes: bytes) -> Dict[str, Any]:
-        """Fallback mínimo: exige 'matchers' no YAML."""
-        if not yaml_bytes:
-            raise ValueError("YAML vazio.")
-        data = yaml.safe_load(io.BytesIO(yaml_bytes).read()) or {}
-        if "matchers" not in data:
-            raise ValueError("Config YAML deve estar em v2 (com 'matchers').")
-        return data
+    from config_loader import load_config
 
+# ---------- Normalização ----------
+def _strip_accents(s: str) -> str:
+    try:
+        from unidecode import unidecode
+        return unidecode(s)
+    except Exception:
+        import unicodedata
+        return ''.join(c for c in unicodedata.normalize('NFKD', s) if not unicodedata.combining(c))
 
-# -------------------------------------------------------------------
-# Util: aceitar bytes/str/dict como cfg_yaml e sempre devolver bytes
-# -------------------------------------------------------------------
-def _to_yaml_bytes(cfg_in) -> bytes:
-    """
-    Aceita:
-      - bytes/bytearray -> retorna como está
-      - dict            -> serializa para YAML (utf-8)
-      - str             -> se for caminho existente, lê em modo 'rb'; senão, trata como YAML em texto
-    Retorna sempre bytes (utf-8).
-    """
-    if isinstance(cfg_in, (bytes, bytearray)):
-        return bytes(cfg_in)
-
-    if isinstance(cfg_in, dict):
-        return yaml.safe_dump(cfg_in, allow_unicode=True, sort_keys=False).encode("utf-8")
-
-    if isinstance(cfg_in, str):
-        path = cfg_in.strip()
-        if path and os.path.exists(path) and os.path.isfile(path):
-            with open(path, "rb") as f:
-                return f.read()
-        # trata como YAML em texto
-        return cfg_in.encode("utf-8")
-
-    raise TypeError(f"Config inválida: esperado bytes/str/dict, recebi {type(cfg_in)}")
-
-
-# -------------------------------------------------------------------
-# Normalização e tokenização
-# -------------------------------------------------------------------
-def _normalize_text(s: str, lowercase: bool = True, strip_accents: bool = True) -> str:
-    if s is None:
-        return ""
-    t = str(s)
+def normalize_text(s: str, lowercase: bool = True, strip_accents: bool = True) -> str:
+    if not isinstance(s, str):
+        s = "" if s is None else str(s)
     if lowercase:
-        t = t.lower()
+        s = s.lower()
     if strip_accents:
-        t = "".join(c for c in unicodedata.normalize("NFD", t) if unicodedata.category(c) != "Mn")
-    return t
+        s = _strip_accents(s)
+    return s
 
-def _tokenize(s: str) -> List[tuple]:
-    """Retorna [(token, start_char_pos), ...]"""
-    return [(m.group(0), m.start()) for m in re.finditer(r"\w+|[^\w\s]", s, flags=re.UNICODE)]
+# ---------- Compilação de padrões ----------
+def _compile_term(term: str) -> re.Pattern:
+    t = term.strip()
+    if not t:
+        return re.compile(r"$^")
+    if " " in t:
+        return re.compile(re.escape(t))
+    else:
+        return re.compile(r"\b" + re.escape(t) + r"\b")
 
+def compile_terms(terms: Iterable[str]) -> List[re.Pattern]:
+    return [_compile_term(t) for t in (terms or []) if isinstance(t, str) and t.strip()]
 
-# -------------------------------------------------------------------
-# Matching
-# -------------------------------------------------------------------
-def _match_positions(text_norm: str, patterns: List[Dict[str, Any]]) -> List[tuple]:
-    """
-    Retorna [(start_char, pattern_dict), ...] para cada match.
-    type:
-      - literal -> \b...\b (se não tiver espaço). Se tiver espaço, vira 'phrase'.
-      - phrase  -> substring (escape)
-      - regex   -> regex bruto
-    """
-    hits: List[tuple] = []
-    for p in patterns or []:
-        pat = (p.get("pattern") or "").strip()
-        if not pat:
-            continue
-        ptype = (p.get("type") or "literal").strip().lower()
-        if ptype == "literal" and re.search(r"\s", pat):
-            ptype = "phrase"
+# ---------- Indexação de tokens ----------
+_word_re = re.compile(r"\w+")
 
-        try:
-            if ptype == "literal":
-                rgx = re.compile(r"\b" + re.escape(pat) + r"\b")
-                for m in rgx.finditer(text_norm):
-                    hits.append((m.start(), p))
-            elif ptype == "phrase":
-                rgx = re.compile(re.escape(pat))
-                for m in rgx.finditer(text_norm):
-                    hits.append((m.start(), p))
-            elif ptype == "regex":
-                rgx = re.compile(pat)
-                for m in rgx.finditer(text_norm):
-                    hits.append((m.start(), p))
-            else:
-                # default: literal
-                rgx = re.compile(r"\b" + re.escape(pat) + r"\b")
-                for m in rgx.finditer(text_norm):
-                    hits.append((m.start(), p))
-        except re.error:
-            # padrão inválido: ignora
-            continue
-    return hits
+def _word_starts(text: str) -> List[int]:
+    return [m.start() for m in _word_re.finditer(text)]
 
-
-def _within_window(tokens: List[tuple], posA: List[tuple], posB: List[tuple], window_tokens: int) -> bool:
-    """Retorna True se existe A/B com distância em tokens <= window_tokens."""
-    starts = [s for _, s in tokens]
-
+def _char_to_token_index(char_idx: int, word_starts: List[int]) -> int:
     import bisect
-    def char_to_tok_idx(ch):
-        i = bisect.bisect_right(starts, ch) - 1
-        return max(0, i)
+    return bisect.bisect_right(word_starts, char_idx)
 
-    for a in posA:
-        ia = char_to_tok_idx(a[0])
-        for b in posB:
-            ib = char_to_tok_idx(b[0])
-            if abs(ia - ib) <= window_tokens:
+def _token_distance(a_char: int, b_char: int, word_starts: List[int]) -> int:
+    ai = _char_to_token_index(a_char, word_starts)
+    bi = _char_to_token_index(b_char, word_starts)
+    return abs(ai - bi)
+
+# ---------- Matching ----------
+def find_matches(text_norm: str, patterns: List[re.Pattern]) -> List[Tuple[int, int, str]]:
+    out: List[Tuple[int, int, str]] = []
+    for rgx in patterns:
+        for m in rgx.finditer(text_norm):
+            out.append((m.start(), m.end(), m.group(0)))
+    out.sort(key=lambda x: x[0])
+    return out
+
+def any_near(a_matches: List[Tuple[int, int, str]], b_matches: List[Tuple[int, int, str]], k_tokens: int, word_starts: List[int]) -> bool:
+    if not a_matches or not b_matches:
+        return False
+    for sa, ea, _ in a_matches:
+        for sb, eb, _ in b_matches:
+            if _token_distance(sa, sb, word_starts) <= k_tokens:
                 return True
     return False
 
+def _unique_terms(matches: List[Tuple[int, int, str]], limit: int = 50) -> str:
+    """Retorna termos únicos (normalizados) separados por ' | ' para auditoria."""
+    seen = []
+    seen_set = set()
+    for _, _, t in matches:
+        if t not in seen_set:
+            seen.append(t)
+            seen_set.add(t)
+        if len(seen) >= limit:
+            break
+    return " | ".join(seen)
 
-# -------------------------------------------------------------------
-# Avaliação de regras
-# -------------------------------------------------------------------
-class _HitSet:
-    def __init__(self, hits: List[tuple]):
-        self.hits = hits or []
-    def __bool__(self):
-        return bool(self.hits)
-    def __repr__(self):
-        return f"HitSet({len(self.hits)})"
+# ---------- Decisão básica (com motivo) ----------
+def decide_basic(P: int, N: int, Cpos: bool, Cneg: bool, cfg: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Retorna (decision, reason_code).
+    Opção A aplicada: se P==0 e N==0 => EXCLUI (NO_SIGNALS).
+    """
+    require_ctx = bool(cfg.get("require_context", False))
+    neg_wins = bool(cfg.get("negative_wins_ties", True))
+    minP = int(cfg.get("min_pos_to_include", 1))
+    minN = int(cfg.get("min_neg_to_exclude", 1))
 
+    # 🔴 Opção A: sem sinais => EXCLUI
+    if P == 0 and N == 0:
+        return "EXCLUI", "NO_SIGNALS"
 
-def _apply_rules_to_text(text: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
-    norm = cfg.get("normalization", {})
+    if require_ctx:
+        pos_ok = P >= minP
+        neg_ok = N >= minN
+        if Cpos and pos_ok and not Cneg:
+            return "INCLUI", "REQ_CTX_POS_ONLY"
+        if Cneg and neg_ok and not Cpos:
+            return "EXCLUI", "REQ_CTX_NEG_ONLY"
+        # não atendeu exclusividade de contexto
+        if pos_ok and not Cpos:
+            return "REVISA", "REQ_CTX_POS_NO_CTX"
+        if neg_ok and not Cneg:
+            return "REVISA", "REQ_CTX_NEG_NO_CTX"
+        if pos_ok and neg_ok:
+            return "REVISA", "REQ_CTX_TIE_OR_NO_EXCLUSIVE"
+        return "REVISA", "REQ_CTX_UNMET"
+
+    # contexto não exigido
+    pos_ok = P >= minP
+    neg_ok = N >= minN
+
+    if neg_ok and not pos_ok:
+        return "EXCLUI", "NEG_ONLY"
+    if pos_ok and not neg_ok:
+        return "INCLUI", "POS_ONLY"
+    if pos_ok and neg_ok:
+        if neg_wins:
+            if Cpos and not Cneg:
+                return "INCLUI", "TIE_POS_CTX"
+            if Cneg and not Cpos:
+                return "EXCLUI", "TIE_NEG_CTX"
+            return "REVISA", "TIE_NO_CTX"
+        else:
+            if Cpos and not Cneg:
+                return "INCLUI", "TIE_POS_CTX"
+            return "REVISA", "TIE_NO_CTX"
+
+    # abaixo dos limiares (mas não zero-zerado, já tratado)
+    if (P > 0 and P < minP) and (N == 0):
+        return "REVISA", "POS_BELOW_MIN"
+    if (N > 0 and N < minN) and (P == 0):
+        return "REVISA", "NEG_BELOW_MIN"
+    return "REVISA", "WEAK_SIGNALS"
+
+# ---------- API principal ----------
+CfgSource = Union[bytes, Dict[str, Any]]
+
+def run_filter(df: pd.DataFrame, text_col: str, cfg_source: CfgSource) -> pd.DataFrame:
+    """
+    Aplica o filtro básico a um DataFrame, retornando um novo DataFrame com colunas extras.
+    - df: tabela de entrada
+    - text_col: nome da coluna texto
+    - cfg_source: bytes YAML ou dicionário já carregado
+    """
+    if isinstance(cfg_source, (bytes, bytearray)):
+        cfg = load_config(cfg_source)
+    elif isinstance(cfg_source, dict):
+        cfg = cfg_source
+    else:
+        raise ValueError("cfg_source deve ser bytes (YAML) ou dict.")
+
+    norm_opts = cfg.get("normalization", {}) or {}
+    lowercase = bool(norm_opts.get("lowercase", True))
+    strip_acc = bool(norm_opts.get("strip_accents", True))
     window = int(cfg.get("window", 8))
-    M = cfg.get("matchers", {})
-    positives = M.get("positives", [])
-    negatives = M.get("negatives", [])
-    contexts  = M.get("contexts", {})
-    rules     = cfg.get("rules", [])
 
-    # normaliza texto e padrões
-    t = _normalize_text(text,
-                        lowercase=bool(norm.get("lowercase", True)),
-                        strip_accents=bool(norm.get("strip_accents", True)))
-    toks = _tokenize(t)
+    # Normalizar termos antes de compilar (casa com o texto normalizado)
+    def _norm_terms(terms):
+        return [normalize_text(t, lowercase=lowercase, strip_accents=strip_acc) for t in (terms or [])]
 
-    def _norm_patterns(lst):
-        out = []
-        for d in lst or []:
-            q = dict(d)
-            q["pattern"] = _normalize_text(q.get("pattern") or "",
-                                           lowercase=bool(norm.get("lowercase", True)),
-                                           strip_accents=bool(norm.get("strip_accents", True)))
-            if not q["pattern"]:
-                continue
-            if "weight" in q:
-                try:
-                    q["weight"] = float(q["weight"])
-                except Exception:
-                    q.pop("weight", None)
-            out.append(q)
-        return out
+    pos_patterns = compile_terms(_norm_terms(cfg.get("positives")))
+    neg_patterns = compile_terms(_norm_terms(cfg.get("negatives")))
+    ctx_patterns = compile_terms(_norm_terms(cfg.get("contexts")))
 
-    pos_pats = _norm_patterns(positives)
-    neg_pats = _norm_patterns(negatives)
-    ctx_pats = {
-        g: {
-            "category": (info or {}).get("category"),
-            "patterns": _norm_patterns((info or {}).get("patterns") or []),
-        }
-        for g, info in (contexts or {}).items()
-    }
+    out_rows = []
+    for _, row in df.iterrows():
+        text = row.get(text_col, "")
+        text = "" if text is None else str(text)
+        text_norm = normalize_text(text, lowercase=lowercase, strip_accents=strip_acc)
+        words_idx = _word_starts(text_norm)
 
-    pos_hits = _match_positions(t, pos_pats)
-    neg_hits = _match_positions(t, neg_pats)
-    ctx_hits_map = {g: _match_positions(t, info["patterns"]) for g, info in ctx_pats.items()}
+        pos_matches = find_matches(text_norm, pos_patterns)
+        neg_matches = find_matches(text_norm, neg_patterns)
+        ctx_matches = find_matches(text_norm, ctx_patterns)
 
-    # score simples: soma dos pesos positivos encontrados (default 1.0)
-    score = sum(p.get("weight", 1.0) for _, p in pos_hits)
+        P = len(pos_matches)
+        N = len(neg_matches)
+        Cpos = any_near(pos_matches, ctx_matches, window, words_idx) if ctx_patterns else False
+        Cneg = any_near(neg_matches, ctx_matches, window, words_idx) if ctx_patterns else False
 
-    def POS(): return _HitSet(pos_hits)
-    def NEG(): return _HitSet(neg_hits)
-    def CTX(group): return _HitSet(ctx_hits_map.get(group, []))
-    def WITHIN(n, A, B): return _within_window(toks, A.hits, B.hits, int(n))
+        decision, reason_code = decide_basic(P, N, Cpos, Cneg, cfg)
+        score = P - N
 
-    env = {"POS": POS, "NEG": NEG, "CTX": CTX, "WITHIN": WITHIN}
+        # Auditoria amigável
+        minP = int(cfg.get("min_pos_to_include", 1))
+        minN = int(cfg.get("min_neg_to_exclude", 1))
+        reason_detail = (
+            f"P={P} (min {minP}), N={N} (min {minN}), "
+            f"Cpos={'1' if Cpos else '0'}, Cneg={'1' if Cneg else '0'}, janela={window}, "
+            f"require_ctx={'1' if cfg.get('require_context', False) else '0'}, "
+            f"neg_wins={'1' if cfg.get('negative_wins_ties', True) else '0'} → {reason_code}"
+        )
 
-    decision = "REVISA"
-    category = ""
-    rule_name = ""
+        new_row = dict(row)
+        new_row["decision"] = decision
+        new_row["decision_reason_code"] = reason_code
+        new_row["decision_reason"] = reason_detail
+        new_row["p_count"] = P
+        new_row["n_count"] = N
+        new_row["ctx_count"] = len(ctx_matches)
+        new_row["near_pos_ctx"] = bool(Cpos)
+        new_row["near_neg_ctx"] = bool(Cneg)
+        new_row["score_total"] = float(score)
+        # termos que dispararam (para auditoria)
+        new_row["pos_terms"] = _unique_terms(pos_matches)
+        new_row["neg_terms"] = _unique_terms(neg_matches)
+        new_row["ctx_terms"] = _unique_terms(ctx_matches)
 
-    for r in rules or []:
-        eq = (r.get("equation") or "").strip()
-        if not eq:
-            continue
-        try:
-            res = eval(eq, {"__builtins__": {}}, env)  # expressão controlada via YAML
-        except Exception:
-            res = False
-        if res:
-            ms = r.get("min_score", None)
-            if ms is None or score >= float(ms):
-                decision = (r.get("decision") or "REVISA").upper()
-                category = (r.get("assign_category") or "").strip()
-                rule_name = (r.get("name") or "").strip()
-                break
+        out_rows.append(new_row)
 
-    return {
-        "decision": decision,
-        "category": category,
-        "score": score,
-        "rule": rule_name,
-        "pos_hits": [p for _, p in pos_hits],
-        "neg_hits": [p for _, p in neg_hits],
-        "ctx_hits": {g: [p for _, p in hits] for g, hits in ctx_hits_map.items()},
-    }
-
-
-# -------------------------------------------------------------------
-# API pública
-# -------------------------------------------------------------------
-def run_filter(df: pd.DataFrame, text_col: str, cfg_yaml, **kwargs) -> pd.DataFrame:
-    """
-    Aplica o filtro do YAML v2 (única fonte) sobre df[text_col].
-
-    Parâmetro cfg_yaml pode ser:
-      - bytes (YAML)
-      - str   (caminho de arquivo .yaml ou YAML em texto)
-      - dict  (já carregado; será serializado p/ YAML antes de validar)
-
-    Retorna df com colunas adicionais:
-       __decision, __category, __score, __rule, __pos_hits, __neg_hits, __ctx_hits
-    """
-    cfg_bytes = _to_yaml_bytes(cfg_yaml)
-    cfg = load_config_v2_from_bytes(cfg_bytes)  # valida/normaliza estrutura v2
-
-    vals = df[text_col].fillna("").astype(str).tolist()
-    decisions: List[str] = []
-    categories: List[str] = []
-    scores: List[float] = []
-    rules: List[str] = []
-    pos_hits_list: List[Any] = []
-    neg_hits_list: List[Any] = []
-    ctx_hits_list: List[Any] = []
-
-    for s in vals:
-        res = _apply_rules_to_text(s, cfg)
-        decisions.append(res["decision"])
-        categories.append(res["category"])
-        scores.append(res["score"])
-        rules.append(res["rule"])
-        pos_hits_list.append(res["pos_hits"])
-        neg_hits_list.append(res["neg_hits"])
-        ctx_hits_list.append(res["ctx_hits"])
-
-    out = df.copy()
-    out["__decision"] = decisions
-    out["__category"] = categories
-    out["__score"] = scores
-    out["__rule"] = rules
-    out["__pos_hits"] = pos_hits_list
-    out["__neg_hits"] = neg_hits_list
-    out["__ctx_hits"] = ctx_hits_list
-    return out
+    return pd.DataFrame(out_rows)

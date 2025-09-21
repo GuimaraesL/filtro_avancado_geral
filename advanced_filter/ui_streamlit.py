@@ -8,25 +8,20 @@ from typing import Optional, List
 import pandas as pd
 import streamlit as st
 
-# Imports com fallback (execução dentro/fora do pacote)
-try:
-    from .excel_io import read_table, write_output  # opcional, usado no resultado
-    from .engine import run_filter
-    from .ui.controller import (
-        is_excel_name, list_sheets_from_bytes, list_columns_from_bytes,
-        read_table_compat, autodetect_sheet_by_column, quick_test_highlight,
-    )
-    from .ui.state import ensure_bootstrap
-    from .ui.views_profiles import render_sidebar_profile_selector, render_profiles_tab
-except Exception:
-    from advanced_filter.excel_io import read_table, write_output
-    from advanced_filter.engine import run_filter
-    from advanced_filter.ui.controller import (
-        is_excel_name, list_sheets_from_bytes, list_columns_from_bytes,
-        read_table_compat, autodetect_sheet_by_column, quick_test_highlight,
-    )
-    from advanced_filter.ui.state import ensure_bootstrap
-    from advanced_filter.ui.views_profiles import render_sidebar_profile_selector, render_profiles_tab
+# Imports absolutos do pacote (sem relativos)
+from advanced_filter.engine import run_filter
+from advanced_filter.ui.controller import (
+    is_excel_name,
+    list_sheets_from_bytes,
+    list_columns_from_bytes,
+    read_table_compat,
+    quick_test_highlight,
+)
+from advanced_filter.ui.state import ensure_bootstrap
+from advanced_filter.ui.views_profiles import (
+    render_sidebar_profile_selector,
+    render_profiles_tab,
+)
 
 # --------------------------------------------------------------------
 # Config da página e bootstrap de estado
@@ -34,20 +29,26 @@ except Exception:
 st.set_page_config(page_title="Filtro Avançado por Contexto (Config)", layout="wide")
 ensure_bootstrap()
 
-# --------------------------------------------------------------------
-# Helper: trocar de aba programaticamente
-# --------------------------------------------------------------------
-def _switch_to_tab(label: str):
+def inject_highlight_css():
     st.markdown(
-        f"""
-        <script>
-        const tabs = Array.from(parent.document.querySelectorAll('button[role="tab"]'));
-        const t = tabs.find(el => el.innerText.trim() === {label!r});
-        if (t) t.click();
-        </script>
+        """
+        <style>
+        /* Destaques no texto */
+        .hl-pos{ background: rgba(46,125,50,.35); padding: 0 .15em; border-radius: .25rem; }
+        .hl-neg{ background: rgba(198,40,40,.35); padding: 0 .15em; border-radius: .25rem; }
+        .hl-ctx{ background: rgba(21,101,192,.35); padding: 0 .15em; border-radius: .25rem; }
+
+        /* Badges de decisão */
+        .badge{ display:inline-block; padding:4px 10px; border-radius:999px; font-weight:600; font-size:.8rem; }
+        .badge-inc{ background:#2e7d32; color:#fff; }
+        .badge-exc{ background:#c62828; color:#fff; }
+        .badge-rev{ background:#616161; color:#fff; }
+        </style>
         """,
         unsafe_allow_html=True,
     )
+
+inject_highlight_css()
 
 def _md5(b: Optional[bytes]) -> str:
     if not b:
@@ -96,12 +97,9 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("Configuração")
-
-    # 🔁 Agora a fonte da configuração fica NA BARRA LATERAL (como antes)
     cfg_bytes, cfg_name, cfg_source_label = render_sidebar_profile_selector(
         st.file_uploader("YAML (config)", type=["yaml", "yml"], key="__cfg_upload")
     )
-    # Guardar na sessão para outras abas
     st.session_state["__cfg_bytes"] = cfg_bytes
     st.session_state["__cfg_name"] = cfg_name
     st.session_state["__cfg_label"] = cfg_source_label
@@ -109,18 +107,18 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Saída")
     st.session_state["__outname"] = st.text_input(
-        "Nome do arquivo de saída (.xlsx)", value=st.session_state.get("__outname", "resultado_filtrado.xlsx"),
+        "Nome do arquivo de saída (.xlsx)",
+        value=st.session_state.get("__outname", "resultado_filtrado.xlsx"),
         key="__outname_sidebar"
     )
 
-    # ▶️ Botão Executar filtro (volta ao comportamento anterior, e muda para a aba Resultado)
+    # ▶️ Botão Executar filtro
     if st.button("Executar filtro", use_container_width=True, key="__btn_exec_filter"):
         if uploaded_file is None:
             st.warning("Envie um arquivo CSV/Excel para executar o filtro.")
         elif not cfg_bytes:
             st.warning("Escolha um Perfil ou envie um YAML para executar o filtro.")
         else:
-            # sinalizar solicitação de execução + parâmetros atuais
             st.session_state["__exec_requested"] = True
             st.session_state["__exec_snapshot"] = {
                 "file_hash": _md5(data_bytes),
@@ -131,20 +129,14 @@ with st.sidebar:
                 "outname": st.session_state.get("__outname") or "resultado_filtrado.xlsx",
                 "filename": uploaded_file.name if uploaded_file else "",
             }
-            # salvar bytes em sessão (para leitura segura no próximo rerun)
             st.session_state["__last_data_bytes"] = data_bytes
-            # pedir para trocar de aba no próximo rerun
+            # marcar para trocar de aba no fim do render
             st.session_state["__go_result"] = True
 
 # --------------------------------------------------------------------
 # TABS (main)
 # --------------------------------------------------------------------
 tab_quick, tab_profiles, tab_result, tab_help = st.tabs(["Teste Rápido", "Perfis", "Resultado", "Ajuda"])
-
-# Se o usuário clicou "Executar filtro", trocar de aba imediatamente
-if st.session_state.get("__go_result"):
-    st.session_state["__go_result"] = False
-    _switch_to_tab("Resultado")
 
 # ============================================================
 # TESTE RÁPIDO
@@ -161,7 +153,6 @@ with tab_quick:
     else:
         st.caption("Sem configuração carregada.")
 
-    # Texto de teste
     st.session_state.setdefault("__quick_dirty", False)
     st.session_state.setdefault("prev_cfg_hash", None)
     st.session_state.setdefault("prev_sample_text", "")
@@ -177,8 +168,11 @@ with tab_quick:
         on_change=_mark_quick_dirty,
     )
 
-    # lógica do quick test (executa quando há texto + cfg e algo mudou)
-    cfg_hash = _md5(cfg_bytes)
+    # Quick test — roda quando necessário
+    def _md5_bytes(b: Optional[bytes]) -> str:
+        return hashlib.md5(b).hexdigest() if b else ""
+
+    cfg_hash = _md5_bytes(cfg_bytes)
     prev_hash = st.session_state.get("prev_cfg_hash")
     prev_text = st.session_state.get("prev_sample_text") or ""
     current_text = st.session_state.get("sample_text") or ""
@@ -215,7 +209,6 @@ with tab_quick:
                 f"""
                 <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
                   <span class="badge {badge_cls}">{decision or "-"}</span>
-                  <span><b>Categoria:</b> {row.get("categoria") or "-"}</span>
                   <span><b>Score:</b> {row.get("score_total"):.2f}</span>
                 </div>
                 """,
@@ -247,7 +240,6 @@ with tab_profiles:
 with tab_result:
     st.markdown("### Resultado")
 
-    # Só roda ao clicar no botão da sidebar
     exec_requested = st.session_state.get("__exec_requested", False)
     snapshot = st.session_state.get("__exec_snapshot") or {}
 
@@ -255,21 +247,19 @@ with tab_result:
         st.info("Use **Executar filtro** na barra lateral para processar o arquivo.")
         st.stop()
 
-    # parâmetros atuais (do snapshot gravado no clique)
     cfg_bytes = st.session_state.get("__cfg_bytes")
     text_col = snapshot.get("text_col") or st.session_state.get("__text_col", "texto")
     selected_sheet = snapshot.get("sheet")
-    is_excel = snapshot.get("is_excel", False)
     out_name = snapshot.get("outname") or (st.session_state.get("__outname") or "resultado_filtrado.xlsx")
 
-    # recuperar os bytes do arquivo (do momento do clique)
     data_bytes = st.session_state.get("__last_data_bytes")
     if not data_bytes or not cfg_bytes:
         st.warning("Arquivo ou configuração ausentes. Clique novamente em **Executar filtro**.")
         st.stop()
 
-    # Salvar temporário e ler
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(snapshot.get("filename", "data.xlsx"))[-1]) as tmp:
+    # gravar temp e ler com util compatível
+    suffix = os.path.splitext(snapshot.get("filename", "data.xlsx"))[-1] or ".xlsx"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(data_bytes or b"")
         tmp.flush()
         data_path = tmp.name
@@ -280,14 +270,12 @@ with tab_result:
         st.error(f"Erro ao ler arquivo: {e}")
         st.stop()
 
-    # Executar engine
     try:
         result = run_filter(df, text_col, cfg_bytes)
     except Exception as e:
         st.error(f"Erro ao executar filtro: {e}")
         st.stop()
 
-    # Persistir último resultado para reexibição sem reprocessar
     st.session_state["last_result_df"] = result.copy()
     st.session_state["__exec_requested"] = False  # consumido
 
@@ -323,3 +311,30 @@ with tab_help:
         - Para processar o arquivo inteiro, use **Executar filtro** na barra lateral; a tela muda para **Resultado** automaticamente.
         """
     )
+
+# ============================================================
+# Troca automática para a aba Resultado (robusta)
+# ============================================================
+if st.session_state.get("__go_result"):
+    st.markdown(
+        """
+        <script>
+        (function clickResultTab(){
+          const tryClick = () => {
+            try {
+              const root = parent.document;
+              const tabs = Array.from(root.querySelectorAll('button[role="tab"]'));
+              const t = tabs.find(el => el.innerText.trim().startsWith('Resultado'));
+              if (t) { t.click(); }
+              else { setTimeout(tryClick, 60); }
+            } catch (e) {
+              setTimeout(tryClick, 60);
+            }
+          };
+          tryClick();
+        })();
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
+    st.session_state["__go_result"] = False
