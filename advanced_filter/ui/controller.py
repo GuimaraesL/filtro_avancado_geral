@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import List, Optional, Tuple, Dict, Any
 import os
-import tempfile
+import re
 from io import BytesIO
 import html
 
@@ -12,10 +12,9 @@ from unidecode import unidecode
 
 # Camada de negócio
 from ..excel_io import read_table
-from ..engine import run_filter
-from ..config_loader import load_config
-from ..matcher import build_indices
-from ..preprocessor import normalize
+from ..engine import run_filter                     # v2: retorna __decision/__category/...
+from ..config_loader import load_config             # v2: recebe BYTES e retorna dict
+from ..preprocessor import normalize                # normalização simples (lower/accents)
 
 # --------- Helpers básicos ---------
 def is_excel_name(name: str) -> bool:
@@ -93,22 +92,30 @@ def ensure_cfg_bytes(cfg_file) -> Tuple[Optional[bytes], str]:
 
 # --------- Teste rápido (1 linha) ---------
 def quick_test(sample_text: str, text_col: str, cfg_bytes: bytes, cfg_name: str):
+    """
+    Executa o engine v2 em 1 linha e mapeia para o formato esperado pela UI.
+    """
     df_test = pd.DataFrame([{text_col: (sample_text or "").strip()}])
-    with tempfile.TemporaryDirectory() as tdir:
-        cfg_path = os.path.join(tdir, cfg_name or "config.yaml")
-        with open(cfg_path, "wb") as f:
-            f.write(cfg_bytes)
 
-        result = run_filter(df_test, text_col, cfg_path)
-        row = result["full"].iloc[0].to_dict()
-        return row, result["full"]
+    # roda o engine v2 — retorna colunas __decision/__category/__score/__rule/...
+    result = run_filter(df_test, text_col, cfg_bytes)
+
+    r0 = result.iloc[0]
+    row = {
+        "decision":    str(r0.get("__decision", "") or "").upper(),
+        "categoria":   r0.get("__category", "") or "",
+        "score_total": float(r0.get("__score", 0.0) or 0.0),
+        "rule_fired":  r0.get("__rule", "") or "",
+        "audit": (
+            f"POS={len(r0.get('__pos_hits', []) or [])}, "
+            f"NEG={len(r0.get('__neg_hits', []) or [])}, "
+            f"CTX_grupos={len((r0.get('__ctx_hits', {}) or {}).keys())}"
+        ),
+    }
+    return row, result  # (full_df agora é o próprio result)
 
 # --------- Normalização com mapeamento (norm_idx -> orig_idx) ---------
 def normalize_with_map(text: str, lowercase: bool = True, strip_accents: bool = True) -> Tuple[str, List[int]]:
-    """
-    Retorna (texto_normalizado, map_norm_to_orig).
-    Cada posição i do texto normalizado aponta para o índice do caractere original que o gerou.
-    """
     out_chars: List[str] = []
     map_norm_to_orig: List[int] = []
     for i, ch in enumerate(text):
@@ -122,28 +129,65 @@ def normalize_with_map(text: str, lowercase: bool = True, strip_accents: bool = 
             map_norm_to_orig.append(i)
     return "".join(out_chars), map_norm_to_orig
 
+# --------- Mini-matcher local (alinhado ao engine v2) ---------
+def _compile_pattern(normalized_pat: str, ptype: str) -> re.Pattern:
+    # Se 'literal' mas tem espaço, vira 'phrase' (mesma regra do engine)
+    t = (ptype or "literal").strip().lower()
+    if t == "literal" and re.search(r"\s", normalized_pat):
+        t = "phrase"
+    if t == "literal":
+        return re.compile(r"\b" + re.escape(normalized_pat) + r"\b")
+    elif t == "phrase":
+        return re.compile(re.escape(normalized_pat))
+    elif t == "regex":
+        return re.compile(normalized_pat)
+    else:
+        return re.compile(r"\b" + re.escape(normalized_pat) + r"\b")
+
+def _find_spans(text_norm: str, patterns: List[Dict[str, Any]],
+                lowercase: bool, strip_accents: bool) -> List[Tuple[Tuple[int,int], Dict[str, Any]]]:
+    hits: List[Tuple[Tuple[int,int], Dict[str, Any]]] = []
+    for spec in patterns or []:
+        raw = (spec.get("pattern") or "").strip()
+        if not raw:
+            continue
+        # 🔑 normaliza o padrão com as mesmas flags do texto
+        pat = normalize(raw, lowercase=lowercase, strip_accents=strip_accents)
+        try:
+            rgx = _compile_pattern(pat, (spec.get("type") or "literal"))
+            for m in rgx.finditer(text_norm):
+                hits.append(((m.start(), m.end()), spec))
+        except re.error:
+            continue
+    return hits
+
 # --------- Coleta de spans (POS/NEG/CTX) ---------
 def _collect_hits(sample_text: str, cfg_bytes: bytes, cfg_name: str):
     """
-    Retorna:
-      norm_text, pos_hits, neg_hits, ctx_hits_by_group, cfg (para saber flags de normalização)
-    hits: [((start,end), spec_dict), ...]
+    Retorna: norm_text, pos_hits, neg_hits, ctx_hits_by_group, cfg_dict
     """
-    with tempfile.TemporaryDirectory() as tdir:
-        cfg_path = os.path.join(tdir, cfg_name or "config.yaml")
-        with open(cfg_path, "wb") as f:
-            f.write(cfg_bytes)
+    cfg = load_config(cfg_bytes)  # dict v2 (normalization/window/matchers/regras)
+    norm_flags = (cfg.get("normalization") or {})
+    lc = bool(norm_flags.get("lowercase", True))
+    sa = bool(norm_flags.get("strip_accents", True))
 
-        cfg = load_config(cfg_path)
-        norm = normalize(sample_text, lowercase=cfg.normalization.lowercase, strip_accents=cfg.normalization.strip_accents)
-        indices = build_indices(cfg)
+    # Texto normalizado
+    norm = normalize(sample_text, lowercase=lc, strip_accents=sa)
 
-        pos_hits = indices["positives"].findall(norm)
-        neg_hits = indices["negatives"].findall(norm)
-        ctx_hits_by_group: Dict[str, List] = {name: idx.findall(norm) for name, idx in indices["contexts"].items()}
-        return norm, pos_hits, neg_hits, ctx_hits_by_group, cfg
+    M = cfg.get("matchers", {}) or {}
+    positives = M.get("positives") or []
+    negatives = M.get("negatives") or []
+    contexts  = M.get("contexts")  or {}
 
-# --------- HTML high-contrast para highlight ---------
+    pos_hits = _find_spans(norm, positives, lc, sa)
+    neg_hits = _find_spans(norm, negatives, lc, sa)
+    ctx_hits_by_group: Dict[str, List] = {
+        g: _find_spans(norm, (info or {}).get("patterns") or [], lc, sa)
+        for g, info in contexts.items()
+    }
+    return norm, pos_hits, neg_hits, ctx_hits_by_group, cfg
+
+# --------- HTML para highlight ---------
 CSS_HIGHLIGHT = """
 <style>
 :root{
@@ -240,18 +284,18 @@ def _project_labels_to_original(labels_norm: List[Optional[str]], map_norm_to_or
 
 # --------- Pipeline de highlight (normalizado + original) ---------
 def quick_test_highlight(sample_text: str, text_col: str, cfg_bytes: bytes, cfg_name: str):
-    # Resultado do pipeline
     row, full_df = quick_test(sample_text, text_col, cfg_bytes, cfg_name)
 
-    # Coleta de hits em TEXTO NORMALIZADO
     norm_text, pos_hits, neg_hits, ctx_hits_by_group, cfg = _collect_hits(sample_text, cfg_bytes, cfg_name)
     labels_norm = _labels_from_hits(len(norm_text), pos_hits, neg_hits, ctx_hits_by_group)
     html_norm = _html_from_labels(norm_text, labels_norm)
 
-    # Mapeia para o ORIGINAL para realce também no texto original
+    norm_flags = (cfg.get("normalization") or {})
+    lc = bool(norm_flags.get("lowercase", True))
+    sa = bool(norm_flags.get("strip_accents", True))
+
     orig_text = sample_text or ""
-    norm_text2, norm2orig = normalize_with_map(orig_text, lowercase=cfg.normalization.lowercase, strip_accents=cfg.normalization.strip_accents)
-    # (norm_text2 deve ser igual a norm_text; se não for, usamos norm_text como referência mesmo assim)
+    _, norm2orig = normalize_with_map(orig_text, lowercase=lc, strip_accents=sa)
     labels_orig = _project_labels_to_original(labels_norm, norm2orig, len(orig_text))
     html_orig = _html_from_labels(orig_text, labels_orig)
 

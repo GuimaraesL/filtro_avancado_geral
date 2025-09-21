@@ -1,72 +1,74 @@
 ﻿# -*- coding: utf-8 -*-
 # advanced_filter/ui/profiles.py
 from __future__ import annotations
-from typing import Dict, List, Optional, Tuple, Any
-import io, math
+from typing import Dict, List, Optional, Any
+import io
+import math
 import yaml
 
-# ----------------- utilitários robustos -----------------
+# ----------------- utilitários -----------------
 def _is_nan(x) -> bool:
     return isinstance(x, float) and math.isnan(x)
 
 def _as_str(x, default: str = "") -> str:
     if x is None or _is_nan(x):
         return default
-    s = str(x)
-    return s
+    try:
+        return str(x)
+    except Exception:
+        return default
 
 def _as_stripped(x, default: str = "") -> str:
-    return _as_str(x, default).strip()
+    s = _as_str(x, default)
+    return s.strip()
 
 def _as_upper(x, default: str = "") -> str:
-    return _as_str(x, default).upper().strip()
+    return _as_stripped(x, default).upper()
 
-def _as_float_or_none(x):
+def _as_float_or_none(x) -> Optional[float]:
     if x is None or _is_nan(x):
         return None
-    if isinstance(x, (int, float)) and not isinstance(x, bool):
-        return float(x)
+    xs = _as_stripped(x, "")
+    if xs == "":
+        return None
     try:
-        xs = str(x).strip()
-        if xs == "":
-            return None
-        return float(xs.replace(",", "."))  # tolera vírgula
+        return float(xs)
     except Exception:
         return None
 
-# -------- Helpers de parsing/serialização --------
 def _split_multivalue(s) -> List[str]:
     """
-    Divide por quebras de linha, ponto-e-vírgula ou vírgula.
-    Aceita valores não-string (converte com segurança).
+    Divide por quebras de linha, ';' ou ',' e retorna entradas não vazias, com strip().
+    Linhas iniciadas por '#' são ignoradas.
     """
     text = _as_str(s, "")
     if not text:
         return []
-    parts = []
+    out: List[str] = []
     for line in text.replace(";", "\n").replace(",", "\n").splitlines():
         t = line.strip()
-        if t:
-            parts.append(t)
-    return parts
+        if t and not t.startswith("#"):
+            out.append(t)
+    return out
 
+# ----------------- parsing de padrões/áreas -----------------
 def parse_pattern_str(s) -> Dict[str, Any]:
     """
-    Converte uma linha de padrão em dict PatternSpec.
-    Sintaxes aceitas (pipe ou :: como separador):
-      - padrao
-      - padrao | type
-      - padrao | type | weight
-      - padrao | type | weight | tag
-    type ∈ {literal, phrase, regex}; weight = float opcional; tag = str opcional.
-    Tolerante a NaN/None/numéricos.
+    Converte 1 linha em PatternSpec:
+      pattern [| type] [| weight] [| tag]
+    - aceita '::' como separador alternativo a '|'
+    - type default: 'literal'
+    - weight vazio -> ignora (engine assume 1.0)
     """
     raw = _as_str(s, "")
     if not raw:
         return {}
     parts = [p.strip() for p in raw.replace("::", "|").split("|")]
-    parts += ["", "", "", ""]  # padding
+    parts += ["", "", "", ""]
     pattern, ptype, weight, tag = parts[:4]
+
+    if not pattern:
+        return {}
 
     out: Dict[str, Any] = {"pattern": pattern}
     out["type"] = ptype if ptype else "literal"
@@ -81,20 +83,22 @@ def parse_pattern_str(s) -> Dict[str, Any]:
     return out
 
 def parse_patterns_area(text) -> List[Dict[str, Any]]:
-    """Converte textarea (linhas) em lista de PatternSpec dicts (robusto a NaN/None)."""
-    items = []
+    """
+    Converte o textarea (linhas múltiplas) em lista de PatternSpec.
+    Tolera espaços, vírgulas e ';' como separadores de linha.
+    """
+    items: List[Dict[str, Any]] = []
     for s in _split_multivalue(text):
         d = parse_pattern_str(s)
         if d.get("pattern"):
             items.append(d)
     return items
 
+# ----------------- parsing de contextos e regras -----------------
 def parse_context_rows(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
-    Converte linhas do data_editor em dict de contexts:
-      { group: {category: str?, patterns: [PatternSpec, ...]} }
-    Espera colunas: group, category, patterns (string multivalor).
-    Robusto a NaN/None.
+    Converte linhas (data_editor) em:
+      { group: { category: str|None, patterns: [PatternSpec, ...] } }
     """
     out: Dict[str, Dict[str, Any]] = {}
     for r in rows or []:
@@ -102,20 +106,19 @@ def parse_context_rows(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         if not group:
             continue
         cat = _as_stripped(r.get("category"), "")
-        patt_str = r.get("patterns")  # pode ser NaN/None
-        patt_list = []
+        patt_str = r.get("patterns")
+        patt_list: List[Dict[str, Any]] = []
         for s in _split_multivalue(patt_str):
             d = parse_pattern_str(s)
             if d.get("pattern"):
                 patt_list.append(d)
-        out[group] = {"category": cat or None, "patterns": patt_list}
+        out[group] = {"category": (cat or None), "patterns": patt_list}
     return out
 
 def parse_rules_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Converte linhas do data_editor em lista de regras.
-    Espera colunas: name, equation, decision, min_score, assign_category
-    Robusto a NaN/None; ignora linhas inválidas.
+    Converte linhas (data_editor) em lista de regras válidas.
+    Campos: name, equation, decision, min_score, assign_category
     """
     out: List[Dict[str, Any]] = []
     for r in rows or []:
@@ -138,90 +141,105 @@ def parse_rules_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         out.append(row)
     return out
 
-# -------- Perfil <-> YAML --------
+# ----------------- conversões perfil <-> config YAML v2 -----------------
 def profile_to_config_dict(profile: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Converte o dicionário de perfil (UI) em config YAML (dict) para o engine.
-    Campos esperados no perfil:
-      - name (str)
-      - normalization: {lowercase: bool, strip_accents: bool}
-      - window (int)   [opcional]
-      - positives_text (str)
-      - negatives_text (str)
-      - contexts_rows (list[dict])
-      - rules_rows (list[dict])
+    Converte o dicionário de perfil (UI) em config **v2** para o engine.
     """
-    cfg: Dict[str, Any] = {}
     norm = (profile.get("normalization") or {})
-    cfg["normalization"] = {
-        "lowercase": bool(norm.get("lowercase", True)),
-        "strip_accents": bool(norm.get("strip_accents", True)),
+    window = profile.get("window") or 8
+
+    positives = parse_patterns_area(profile.get("positives_text"))
+    negatives = parse_patterns_area(profile.get("negatives_text"))
+    contexts  = parse_context_rows(profile.get("contexts_rows") or [])
+    rules     = parse_rules_rows(profile.get("rules_rows") or [])
+
+    return {
+        "normalization": {
+            "lowercase": bool(norm.get("lowercase", True)),
+            "strip_accents": bool(norm.get("strip_accents", True)),
+        },
+        "window": int(window) if window else 8,
+        "matchers": {
+            "positives": positives,
+            "negatives": negatives,
+            "contexts":  contexts,
+        },
+        "rules": rules,
     }
-
-    win = _as_float_or_none(profile.get("window"))
-    if win is not None:
-        try:
-            cfg["window"] = int(win)
-        except Exception:
-            pass
-
-    cfg["positives"] = parse_patterns_area(profile.get("positives_text"))
-    cfg["negatives"] = parse_patterns_area(profile.get("negatives_text"))
-    cfg["contexts"]  = parse_context_rows(profile.get("contexts_rows") or [])
-    cfg["rules"]     = parse_rules_rows(profile.get("rules_rows") or [])
-    return cfg
 
 def config_dict_to_yaml_bytes(cfg: Dict[str, Any]) -> bytes:
     return yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False).encode("utf-8")
 
 def profile_to_yaml_bytes(profile: Dict[str, Any]) -> bytes:
+    """Serializa um perfil (UI) como YAML v2 (única fonte)."""
     return config_dict_to_yaml_bytes(profile_to_config_dict(profile))
 
 def yaml_bytes_to_profile(yaml_bytes: bytes) -> Dict[str, Any]:
     """
-    Converte um YAML (bytes) em um dicionário de perfil (UI).
+    Converte YAML v2 (bytes) -> perfil (UI).
+    Lança erro se o YAML não possuir 'matchers'.
     """
     cfg = yaml.safe_load(io.BytesIO(yaml_bytes).read()) or {}
+    if "matchers" not in cfg:
+        raise ValueError("Este editor aceita apenas YAML v2 (com a chave 'matchers').")
+
     profile: Dict[str, Any] = {
         "name": _as_stripped(cfg.get("name"), ""),
         "normalization": {
             "lowercase": bool((cfg.get("normalization", {}) or {}).get("lowercase", True)),
             "strip_accents": bool((cfg.get("normalization", {}) or {}).get("strip_accents", True)),
         },
-        "window": cfg.get("window", None),
+        "window": cfg.get("window", 8),
         "positives_text": "",
         "negatives_text": "",
         "contexts_rows": [],
         "rules_rows": [],
     }
 
-    def patt_to_line(p: Dict[str, Any]) -> str:
-        parts = [ _as_str(p.get("pattern"), "") ]
-        ptype = _as_stripped(p.get("type"), "")
-        if ptype: parts.append(ptype)
+    # reidrata positivos/negativos em formato texto (1 por linha)
+    pos_lines: List[str] = []
+    for p in ((cfg.get("matchers", {}) or {}).get("positives") or []):
+        line = f"{_as_stripped(p.get('pattern'))} | {_as_stripped(p.get('type'),'literal')}"
         w = _as_float_or_none(p.get("weight"))
-        if w is not None: parts.append(str(w))
-        tag = _as_stripped(p.get("tag"), "")
-        if tag: parts.append(tag)
-        return " | ".join([x for x in parts if x != ""])
+        if w is not None:
+            line += f" | {w}"
+        t = _as_stripped(p.get("tag"), "")
+        if t:
+            line += f" | {t}"
+        pos_lines.append(line)
+    profile["positives_text"] = "\n".join(pos_lines)
 
-    if cfg.get("positives"):
-        profile["positives_text"] = "\n".join([patt_to_line(p) for p in cfg["positives"] if p])
-    if cfg.get("negatives"):
-        profile["negatives_text"] = "\n".join([patt_to_line(p) for p in cfg["negatives"] if p])
+    neg_lines: List[str] = []
+    for p in ((cfg.get("matchers", {}) or {}).get("negatives") or []):
+        line = f"{_as_stripped(p.get('pattern'))} | {_as_stripped(p.get('type'),'literal')}"
+        w = _as_float_or_none(p.get("weight"))
+        if w is not None:
+            line += f" | {w}"
+        t = _as_stripped(p.get("tag"), "")
+        if t:
+            line += f" | {t}"
+        neg_lines.append(line)
+    profile["negatives_text"] = "\n".join(neg_lines)
 
+    # contextos -> rows
     ctx_rows: List[Dict[str, Any]] = []
-    for g, obj in (cfg.get("contexts") or {}).items():
-        lines = []
-        for p in (obj or {}).get("patterns", []):
-            lines.append(patt_to_line(p))
-        ctx_rows.append({
-            "group": _as_stripped(g, ""),
-            "category": _as_stripped((obj or {}).get("category"), ""),
-            "patterns": "\n".join(lines)
-        })
+    for group, cinfo in (((cfg.get("matchers", {}) or {}).get("contexts")) or {}).items():
+        cat = _as_stripped((cinfo or {}).get("category"), "")
+        patt_lines: List[str] = []
+        for p in ((cinfo or {}).get("patterns") or []):
+            line = f"{_as_stripped(p.get('pattern'))} | {_as_stripped(p.get('type'), 'literal')}"
+            w = _as_float_or_none(p.get("weight"))
+            if w is not None:
+                line += f" | {w}"
+            t = _as_stripped(p.get('tag'), "")
+            if t:
+                line += f" | {t}"
+            patt_lines.append(line)
+        ctx_rows.append({"group": group, "category": cat, "patterns": "\n".join(patt_lines)})
     profile["contexts_rows"] = ctx_rows
 
+    # regras -> rows
     rules_rows: List[Dict[str, Any]] = []
     for r in (cfg.get("rules") or []):
         rules_rows.append({
@@ -234,29 +252,28 @@ def yaml_bytes_to_profile(yaml_bytes: bytes) -> Dict[str, Any]:
     profile["rules_rows"] = rules_rows
     return profile
 
-# -------- Perfil inicial --------
+# ----------------- perfil default -----------------
 def make_default_profile(name: str = "Novo Perfil") -> Dict[str, Any]:
     return {
         "name": name,
         "normalization": {"lowercase": True, "strip_accents": True},
         "window": 8,
         "positives_text": "luva | literal | 2.0\nalicate | literal | 1.5\nmartelo | literal | 1.0",
-        "negatives_text": "contramão | phrase | 2.0\ncontra mao | phrase | 2.0\nmoinho de martelos | phrase | 2.0",
+        "negatives_text": "moinho de martelos | phrase | 2.0",
         "contexts_rows": [
             {"group": "MAOS", "category": "Proteção das Mãos", "patterns": "mãos | literal\nmao | literal\ndedos | literal"},
-            {"group": "EQUIPAMENTOS_BLOQUEIO", "category": "Equipamento (Bloqueio)", "patterns": "moinho de martelos | phrase"},
         ],
         "rules_rows": [
             {
                 "name": "incluir_maos_ferramenta",
-                "equation": "WITHIN(8, POS(), CTX('MAOS')) and not CTX('EQUIPAMENTOS_BLOQUEIO')",
+                "equation": "WITHIN(8, POS(), CTX('MAOS'))",
                 "decision": "INCLUI",
                 "min_score": 1.0,
                 "assign_category": "Segurança > Proteção das Mãos",
             },
             {
                 "name": "excluir_negativos",
-                "equation": "NEG() or CTX('EQUIPAMENTOS_BLOQUEIO')",
+                "equation": "NEG()",
                 "decision": "EXCLUI"
             },
             {
