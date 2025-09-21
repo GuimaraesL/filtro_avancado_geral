@@ -5,7 +5,7 @@ normalization:
   lowercase: true
   strip_accents: true
 window: 8
-require_context: true
+require_context: false
 negative_wins_ties: true
 min_pos_to_include: 1
 min_neg_to_exclude: 1
@@ -15,12 +15,12 @@ positives:
 - prensameto
 - risco camuflado de prensamento
 - pontos de prensamento
-- risco de machucar
-- machucar
 - corte
 - dedo proximo
 - mao embaixo da carga
 - sem luva
+- LUVA
+- LUVAS
 - sem luvas
 - sem luva anti impacto
 - sem luvas anti impacto
@@ -40,15 +40,46 @@ positives:
 - pontos de passagem expostos
 - risco de lesao
 - risco de prensamento de dedos
+- MAO
+- MAOS
+- prensamentos
+- no dedo
+- CORTE NO DEDO
+- DORTE NO DEDO
+- dedo
+- dedos
+- Bater a mão contra
+- colocar mão
+- marreta com o cabo solto.
+- COM CABO SOLTO
+- CABO SOLTO
+- sem utilizar luvas
+- CABO DA MARRETA
+- CABO DO AMRTELO
+- EMPUNHADURA DA MARRETA
+- EMPUNHADURA DO MARTELO
+- CABO
+- MARRETA
+- MARTELO
+- LIXADEIRA
+- FURADEIRA
+- PARAFUSADEIRA
+- empunhadura quebrada
+- empunhadura
 negatives:
-- check da ponte preenchido corretamente
-- preenchido corretamente
 - uso de bastao
 - utilizando todos os epis
 - operador utilizando todos os epis
 - uso de epi
 - uso de luva
 - luvas pigmentadas
+- LIMPEZA
+- LIMPESA
+- HOUSEKEEPINKG
+- CONTRAMAO
+- CONTRA MAO
+- FREIO DE MAO
+- CORRIMAO
 contexts:
 - dispositivo
 - estampo
