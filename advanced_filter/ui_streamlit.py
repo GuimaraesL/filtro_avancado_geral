@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-import hashlib
 from typing import Optional, List
-
 import streamlit as st
 
-# UI / App
+# === LOGS ===
+from logs.loggs import get_logger, bump_render_seq, mark_event, log_state
+
 from advanced_filter.ui.state import ensure_bootstrap
 from advanced_filter.ui.controller import (
     is_excel_name,
@@ -24,7 +24,12 @@ from advanced_filter.ui.result_view import (
 st.set_page_config(page_title="Filtro Avançado (Config)", layout="wide")
 ensure_bootstrap()
 
-# ------------------- CSS de destaque para Teste Rápido ------------------- #
+# === LOGS: início de render ===
+logger = get_logger("ui")
+bump_render_seq(logger)
+log_state(logger, prefix="render_state_boot")
+
+# ---------- CSS opcional (visual) ----------
 def _inject_css():
     st.markdown(
         """
@@ -36,15 +41,32 @@ def _inject_css():
         .badge-inc{ background:#2e7d32; color:#fff; }
         .badge-exc{ background:#c62828; color:#fff; }
         .badge-rev{ background:#616161; color:#fff; }
+        .tabs-row{ display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom: .75rem; }
+        .tab-btn{ padding:.4rem .7rem; border-radius:999px; border:1px solid #e0e0e0; cursor:pointer; font-weight:600; }
+        .tab-btn.active{ background:#0e1117; color:#fff; border-color:#0e1117; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 _inject_css()
 
-def _md5(b: Optional[bytes]) -> str:
-    import hashlib as _h
-    return _h.md5(b).hexdigest() if b else ""
+# ---------- Tab controlado por estado ----------
+TABS = ["Teste Rápido", "Perfis", "Resultado", "Ajuda"]
+st.session_state.setdefault("__active_tab", TABS[0])
+
+def _tab_selector():
+    # Renderiza um “segmented” simples via HTML/CSS (sem depender do DOM interno do Streamlit)
+    with st.container():
+        cols = st.columns(len(TABS))
+        for i, name in enumerate(TABS):
+            with cols[i]:
+                active = (st.session_state["__active_tab"] == name)
+                if st.button(
+                    name,
+                    key=f"__tab_{i}",
+                    use_container_width=True
+                ):
+                    st.session_state["__active_tab"] = name
 
 # ------------------- SIDEBAR ------------------- #
 with st.sidebar:
@@ -68,8 +90,7 @@ with st.sidebar:
             if sheets:
                 selected_sheet = st.selectbox("Planilha (sheet)", sheets, index=0, key="__sheet_select")
 
-    # Coluna de texto (apenas se houver arquivo)
-    sidebar_columns = []
+    # Coluna de texto (apenas com arquivo)
     if uploaded_file is not None and data_bytes:
         preview_sheet = selected_sheet or (sheets[0] if sheets else None)
         sidebar_columns = list_columns_from_bytes(data_bytes, is_excel, preview_sheet)
@@ -101,12 +122,17 @@ with st.sidebar:
 
     # ▶️ Executar filtro
     if st.button("Executar filtro", use_container_width=True, key="__btn_exec_filter"):
+        mark_event(logger, "click_execute_filter")
         if uploaded_file is None:
             st.warning("Envie um arquivo CSV/Excel para executar o filtro.")
         elif not cfg_bytes:
             st.warning("Escolha um Perfil ou envie um YAML para executar o filtro.")
         else:
-            # snapshot do contexto da execução
+            # Monta snapshot + preserva bytes em memória
+            import hashlib as _h
+            def _md5(b: Optional[bytes]) -> str:
+                return _h.md5(b).hexdigest() if b else ""
+
             snapshot = {
                 "file_hash": _md5(data_bytes),
                 "cfg_hash": _md5(cfg_bytes),
@@ -116,15 +142,23 @@ with st.sidebar:
                 "outname": st.session_state.get("__outname") or "resultado_filtrado.xlsx",
                 "filename": uploaded_file.name if uploaded_file else "",
             }
-            # dados e flags no estado
             st.session_state["__last_data_bytes"] = data_bytes
-            mark_processing(snapshot)  # zera resultados antigos e marca processamento
-            st.session_state["__go_result"] = True  # forçar ida para aba Resultado
 
-# ------------------- TABS ------------------- #
-tab_quick, tab_profiles, tab_result, tab_help = st.tabs(["Teste Rápido", "Perfis", "Resultado", "Ajuda"])
+            # 1) Loga estado antes
+            log_state(logger, prefix="before_mark_processing")
 
-with tab_quick:
+            # 2) Marca processamento (LIMPA resultado anterior imediatamente)
+            mark_processing(snapshot)
+
+            # 3) Troca de aba — controlada por estado (SEM JS)
+            st.session_state["__active_tab"] = "Resultado"
+            log_state(logger, prefix="after_mark_processing")
+
+# ---------- Render do "tab controlado" ----------
+_tab_selector()
+active = st.session_state["__active_tab"]
+
+if active == "Teste Rápido":
     st.markdown("### Teste Rápido")
     cfg_bytes = st.session_state.get("__cfg_bytes")
     cfg_name = st.session_state.get("__cfg_name")
@@ -151,7 +185,8 @@ with tab_quick:
     )
 
     def _md5_bytes(b: Optional[bytes]) -> str:
-        return hashlib.md5(b).hexdigest() if b else ""
+        import hashlib as _h
+        return _h.md5(b).hexdigest() if b else ""
 
     cfg_hash = _md5_bytes(cfg_bytes)
     prev_hash = st.session_state.get("prev_cfg_hash")
@@ -174,7 +209,7 @@ with tab_quick:
         st.session_state["prev_sample_text"] = current_text
         st.session_state["prev_profiles_version"] = profiles_version
         try:
-            row, full_df, html_orig, _html_norm, counts, _ = quick_test_highlight(
+            row, _df, html_orig, _html_norm, counts, _ = quick_test_highlight(
                 current_text, text_col, cfg_bytes, cfg_name
             )
             decision = (row.get("decision") or "").upper()
@@ -203,44 +238,18 @@ with tab_quick:
     elif not cfg_bytes:
         st.info("Escolha **Perfil** ou envie um **YAML** na barra lateral para usar no Teste Rápido.")
 
-with tab_profiles:
+elif active == "Perfis":
     render_profiles_tab()
 
-with tab_result:
+elif active == "Resultado":
     render_result_tab()
 
-with tab_help:
+else:  # "Ajuda"
     st.markdown(
         """
         **Dicas rápidas**
         - A **fonte da configuração** (Perfil/YAML) fica na **barra lateral**.
         - A **Coluna de texto** aparece na barra lateral após carregar um arquivo.
-        - Durante a execução, o **conteúdo anterior fica oculto** e o **download é desabilitado**.
+        - Durante a execução, o **conteúdo anterior é ocultado** e o **download é desabilitado** até o fim.
         """
     )
-
-# ------------------- Força navegação para "Resultado" ------------------- #
-if st.session_state.get("__go_result"):
-    st.markdown(
-        """
-        <script>
-        (function forceResultTab(){
-          // tenta clicar na aba "Resultado" várias vezes (até ~10s)
-          let attempts = 0;
-          const maxAttempts = 200;
-          const tick = () => {
-            try {
-              const root = parent.document;
-              const tabs = Array.from(root.querySelectorAll('button[role="tab"]'));
-              const t = tabs.find(el => /resultado/i.test((el.textContent || el.innerText || "").trim()));
-              if (t) { t.click(); return; }
-            } catch (e) { /* ignore */ }
-            if (attempts++ < maxAttempts) setTimeout(tick, 50);
-          };
-          tick();
-        })();
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.session_state["__go_result"] = False
