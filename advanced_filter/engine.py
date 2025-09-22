@@ -1,6 +1,6 @@
 ﻿# -*- coding: utf-8 -*-
 from __future__ import annotations
-from typing import Dict, Any, List, Tuple, Iterable, Optional, Union
+from typing import Dict, Any, List, Tuple, Iterable, Union
 import re
 import pandas as pd
 
@@ -33,9 +33,9 @@ def _compile_term(term: str) -> re.Pattern:
     if not t:
         return re.compile(r"$^")
     if " " in t:
-        return re.compile(re.escape(t))
+        return re.compile(re.escape(t))       # frase = substring
     else:
-        return re.compile(r"\b" + re.escape(t) + r"\b")
+        return re.compile(r"\b" + re.escape(t) + r"\b")  # palavra isolada
 
 def compile_terms(terms: Iterable[str]) -> List[re.Pattern]:
     return [_compile_term(t) for t in (terms or []) if isinstance(t, str) and t.strip()]
@@ -64,7 +64,7 @@ def find_matches(text_norm: str, patterns: List[re.Pattern]) -> List[Tuple[int, 
     out.sort(key=lambda x: x[0])
     return out
 
-def any_near(a_matches: List[Tuple[int, int, str]], b_matches: List[Tuple[int, int, str]], k_tokens: int, word_starts: List[int]) -> bool:
+def any_near(a_matches, b_matches, k_tokens: int, word_starts: List[int]) -> bool:
     if not a_matches or not b_matches:
         return False
     for sa, ea, _ in a_matches:
@@ -74,7 +74,7 @@ def any_near(a_matches: List[Tuple[int, int, str]], b_matches: List[Tuple[int, i
     return False
 
 def _unique_terms(matches: List[Tuple[int, int, str]], limit: int = 50) -> str:
-    """Retorna termos únicos (normalizados) separados por ' | ' para auditoria."""
+    """Termos únicos (normalizados) separados por ' | ' para auditoria."""
     seen = []
     seen_set = set()
     for _, _, t in matches:
@@ -85,11 +85,22 @@ def _unique_terms(matches: List[Tuple[int, int, str]], limit: int = 50) -> str:
             break
     return " | ".join(seen)
 
-# ---------- Decisão básica (com motivo) ----------
+# ---------- Decisão (com Opção A e mesma estrutura antiga) ----------
 def decide_basic(P: int, N: int, Cpos: bool, Cneg: bool, cfg: Dict[str, Any]) -> Tuple[str, str]:
     """
     Retorna (decision, reason_code).
-    Opção A aplicada: se P==0 e N==0 => EXCLUI (NO_SIGNALS).
+
+    Mantém a lógica anterior:
+      - Opção A: P==0 e N==0 => EXCLUI (NO_SIGNALS)
+      - require_context = ON:
+          Cpos & P>=minP & !Cneg -> INCLUI
+          Cneg & N>=minN & !Cpos -> EXCLUI
+          caso contrário -> REVISA
+      - require_context = OFF:
+          neg_ok & !pos_ok -> EXCLUI
+          pos_ok & !neg_ok -> INCLUI
+          pos_ok & neg_ok  -> desempate por contexto + flag negative_wins_ties
+                             (igual antes). Sem contexto exclusivo -> REVISA.
     """
     require_ctx = bool(cfg.get("require_context", False))
     neg_wins = bool(cfg.get("negative_wins_ties", True))
@@ -107,7 +118,6 @@ def decide_basic(P: int, N: int, Cpos: bool, Cneg: bool, cfg: Dict[str, Any]) ->
             return "INCLUI", "REQ_CTX_POS_ONLY"
         if Cneg and neg_ok and not Cpos:
             return "EXCLUI", "REQ_CTX_NEG_ONLY"
-        # não atendeu exclusividade de contexto
         if pos_ok and not Cpos:
             return "REVISA", "REQ_CTX_POS_NO_CTX"
         if neg_ok and not Cneg:
@@ -116,7 +126,7 @@ def decide_basic(P: int, N: int, Cpos: bool, Cneg: bool, cfg: Dict[str, Any]) ->
             return "REVISA", "REQ_CTX_TIE_OR_NO_EXCLUSIVE"
         return "REVISA", "REQ_CTX_UNMET"
 
-    # contexto não exigido
+    # contexto NÃO exigido (estrutura antiga com desempate por contexto)
     pos_ok = P >= minP
     neg_ok = N >= minN
 
@@ -136,22 +146,61 @@ def decide_basic(P: int, N: int, Cpos: bool, Cneg: bool, cfg: Dict[str, Any]) ->
                 return "INCLUI", "TIE_POS_CTX"
             return "REVISA", "TIE_NO_CTX"
 
-    # abaixo dos limiares (mas não zero-zerado, já tratado)
     if (P > 0 and P < minP) and (N == 0):
         return "REVISA", "POS_BELOW_MIN"
     if (N > 0 and N < minN) and (P == 0):
         return "REVISA", "NEG_BELOW_MIN"
     return "REVISA", "WEAK_SIGNALS"
 
+# ---------- Tradução humana dos motivos ----------
+def _reason_pt(code: str,
+               P: int, N: int, minP: int, minN: int,
+               Cpos: bool, Cneg: bool,
+               window: int, require_ctx: bool, neg_wins: bool) -> Tuple[str, str]:
+    """
+    Retorna (reason_human, reason_human_detail) em PT-BR para o código.
+    """
+    m = {
+        "NO_SIGNALS": "Sem palavras-chave positivas ou negativas encontradas.",
+        "REQ_CTX_POS_ONLY": "Contexto exigido: houve termo positivo próximo ao contexto e nenhum negativo com contexto.",
+        "REQ_CTX_NEG_ONLY": "Contexto exigido: houve termo negativo próximo ao contexto e nenhum positivo com contexto.",
+        "REQ_CTX_POS_NO_CTX": "Contexto exigido: há termos positivos, mas nenhum deles está próximo do contexto.",
+        "REQ_CTX_NEG_NO_CTX": "Contexto exigido: há termos negativos, mas nenhum deles está próximo do contexto.",
+        "REQ_CTX_TIE_OR_NO_EXCLUSIVE": "Contexto exigido: positivos e negativos com contexto (ou conflito).",
+        "REQ_CTX_UNMET": "Contexto exigido: nenhum termo relevante próximo do contexto.",
+        "NEG_ONLY": "Apenas termos negativos acima do mínimo configurado.",
+        "POS_ONLY": "Apenas termos positivos acima do mínimo configurado.",
+        "TIE_POS_CTX": "Empate entre positivos e negativos; o contexto favorece INCLUIR.",
+        "TIE_NEG_CTX": "Empate entre positivos e negativos; o contexto favorece EXCLUIR.",
+        "TIE_NO_CTX": "Empate entre positivos e negativos sem contexto para desempatar.",
+        "POS_BELOW_MIN": "Há termos positivos, mas abaixo do mínimo configurado.",
+        "NEG_BELOW_MIN": "Há termos negativos, mas abaixo do mínimo configurado.",
+        "WEAK_SIGNALS": "Sinais fracos ou contraditórios.",
+    }
+    short = m.get(code, code)
+
+    # Detalhe amigável com números e opções
+    ctx_txt = []
+    if require_ctx:
+        ctx_txt.append("exigir_contexto=sim")
+    else:
+        ctx_txt.append("exigir_contexto=não")
+    if Cpos or Cneg:
+        ctx_txt.append(f"ctx_perto_pos={'sim' if Cpos else 'não'}")
+        ctx_txt.append(f"ctx_perto_neg={'sim' if Cneg else 'não'}")
+        ctx_txt.append(f"janela={window}")
+    ctx_txt.append(f"negativo_vence={'sim' if neg_wins else 'não'}")
+
+    detail = f"{short} (P={P}/mín {minP}, N={N}/mín {minN}; " + ", ".join(ctx_txt) + ")"
+    return short, detail
+
 # ---------- API principal ----------
 CfgSource = Union[bytes, Dict[str, Any]]
 
 def run_filter(df: pd.DataFrame, text_col: str, cfg_source: CfgSource) -> pd.DataFrame:
     """
-    Aplica o filtro básico a um DataFrame, retornando um novo DataFrame com colunas extras.
-    - df: tabela de entrada
-    - text_col: nome da coluna texto
-    - cfg_source: bytes YAML ou dicionário já carregado
+    Aplica o filtro básico a um DataFrame, retornando um novo DataFrame com colunas extras
+    e campos de auditoria em linguagem natural.
     """
     if isinstance(cfg_source, (bytes, bytearray)):
         cfg = load_config(cfg_source)
@@ -165,7 +214,6 @@ def run_filter(df: pd.DataFrame, text_col: str, cfg_source: CfgSource) -> pd.Dat
     strip_acc = bool(norm_opts.get("strip_accents", True))
     window = int(cfg.get("window", 8))
 
-    # Normalizar termos antes de compilar (casa com o texto normalizado)
     def _norm_terms(terms):
         return [normalize_text(t, lowercase=lowercase, strip_accents=strip_acc) for t in (terms or [])]
 
@@ -192,27 +240,36 @@ def run_filter(df: pd.DataFrame, text_col: str, cfg_source: CfgSource) -> pd.Dat
         decision, reason_code = decide_basic(P, N, Cpos, Cneg, cfg)
         score = P - N
 
-        # Auditoria amigável
         minP = int(cfg.get("min_pos_to_include", 1))
         minN = int(cfg.get("min_neg_to_exclude", 1))
-        reason_detail = (
-            f"P={P} (min {minP}), N={N} (min {minN}), "
-            f"Cpos={'1' if Cpos else '0'}, Cneg={'1' if Cneg else '0'}, janela={window}, "
-            f"require_ctx={'1' if cfg.get('require_context', False) else '0'}, "
-            f"neg_wins={'1' if cfg.get('negative_wins_ties', True) else '0'} → {reason_code}"
+        require_ctx = bool(cfg.get("require_context", False))
+        neg_wins = bool(cfg.get("negative_wins_ties", True))
+        # Tradução humana
+        reason_human, reason_human_detail = _reason_pt(
+            reason_code, P, N, minP, minN, Cpos, Cneg, window, require_ctx, neg_wins
         )
 
         new_row = dict(row)
         new_row["decision"] = decision
+        # códigos técnicos (mantidos)
         new_row["decision_reason_code"] = reason_code
-        new_row["decision_reason"] = reason_detail
+        new_row["decision_reason"] = (
+            f"P={P} (min {minP}), N={N} (min {minN}), "
+            f"Cpos={'1' if Cpos else '0'}, Cneg={'1' if Cneg else '0'}, janela={window}, "
+            f"require_ctx={'1' if require_ctx else '0'}, "
+            f"neg_wins={'1' if neg_wins else '0'} → {reason_code}"
+        )
+        # linguagem natural
+        new_row["reason_human"] = reason_human
+        new_row["reason_human_detail"] = reason_human_detail
+
         new_row["p_count"] = P
         new_row["n_count"] = N
         new_row["ctx_count"] = len(ctx_matches)
         new_row["near_pos_ctx"] = bool(Cpos)
         new_row["near_neg_ctx"] = bool(Cneg)
         new_row["score_total"] = float(score)
-        # termos que dispararam (para auditoria)
+
         new_row["pos_terms"] = _unique_terms(pos_matches)
         new_row["neg_terms"] = _unique_terms(neg_matches)
         new_row["ctx_terms"] = _unique_terms(ctx_matches)
