@@ -17,6 +17,9 @@ _ALIASES = {
     "config_loader": "advanced_filter.core.config_loader",
     "auditor":       "advanced_filter.core.auditor",
     "excel_io":      "advanced_filter.io.excel_io",
+    "logs":          "advanced_filter.logs",
+    "logs.loggs":    "advanced_filter.logs.loggs",
+
 }
 
 # Eager alias: registra os submódulos antigos apontando para os novos
