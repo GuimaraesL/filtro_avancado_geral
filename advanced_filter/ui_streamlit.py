@@ -10,9 +10,8 @@ if REPO_ROOT not in sys.path:
 from typing import Optional, List
 import streamlit as st
 
-# === LOGS ===
-from logs.loggs import get_logger, bump_render_seq, mark_event, log_state
 
+from advanced_filter.logs.loggs import get_logger, bump_render_seq, mark_event, log_state
 from advanced_filter.ui.state import ensure_bootstrap
 from advanced_filter.ui.controller import (
     is_excel_name,
