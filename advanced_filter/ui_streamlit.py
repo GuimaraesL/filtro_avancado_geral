@@ -28,7 +28,7 @@ from advanced_filter.ui.result_view import (
     render_result_tab,
 )
 
-st.set_page_config(page_title="Filtro Avançado (Config)", layout="wide")
+st.set_page_config(page_title="Filtro Avançado", layout="wide")
 ensure_bootstrap()
 
 # === LOGS: início de render ===
