@@ -1,5 +1,9 @@
 ﻿# -*- coding: utf-8 -*-
 # streamlit_app.py (na RAIZ do repositório)
+import os, time
+os.environ["APP_CLOUD"] = "1"
+os.environ["STREAMLIT_STATIC_URL_VERSION"] = str(int(time.time()))
+
 from pathlib import Path
 import sys
 from runpy import run_path

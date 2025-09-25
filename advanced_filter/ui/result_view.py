@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 # === LOGS ===
-from advanced_filter.logs.loggs import get_logger, mark_event,trace, log_state, safe_rerun
+from advanced_filter.logs.loggs import get_logger, mark_event,trace, log_state, safe_rerun,bump_render_seq
 _logger = get_logger("result_view")
 
 from advanced_filter.ui.controller import read_table_compat
