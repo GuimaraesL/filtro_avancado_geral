@@ -9,11 +9,11 @@ import pandas as pd
 import streamlit as st
 
 # === LOGS ===
-from advanced_filter.logs.loggs import get_logger, bump_render_seq, mark_event,trace log_state
+from advanced_filter.logs.loggs import get_logger, mark_event,trace, log_state, safe_rerun
 _logger = get_logger("result_view")
 
 from advanced_filter.ui.controller import read_table_compat
-from advanced_filter.engine import run_filter
+from advanced_filter.core.engine import run_filter
 
 # ---- state keys ----
 RESULT_BYTES_KEY = "__result_bytes"
