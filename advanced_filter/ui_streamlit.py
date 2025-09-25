@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+# --- bootstrap para garantir que 'advanced_filter' seja importável em qualquer ambiente ---
+from pathlib import Path
+import sys
+REPO_ROOT = str(Path(__file__).resolve().parents[1])  # .../filtro_avancado_geral
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+# ------------------------------------------------------------------------------------------
+
 from typing import Optional, List
 import streamlit as st
 
