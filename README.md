@@ -1,8 +1,8 @@
 # FILTRO_AVANCADO — Advanced, Configurable Text Filtering (Streamlit App)
 
 [![Streamlit App](https://img.shields.io/badge/Streamlit-Live%20Demo-red)](https://filtro-avancado.streamlit.app)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](#)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/downloads)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/GuimaraesL/filtro_avancado_geral/blob/master/LICENSE)
 
 > **Filtro Avançado** é um aplicativo em **Streamlit** para **filtragem inteligente e configurável** de bases de texto (planilhas CSV/Excel). Ele permite criar **regras flexíveis** de inclusão/expulsão por palavras-chave, contextos e exceções (anti-padrões), testá-las rapidamente e **exportar os resultados** em planilhas limpas para análise e reporte.
 
