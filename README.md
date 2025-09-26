@@ -107,6 +107,8 @@ pip install -r requirements.txt
 
 # 4) Rode o app Streamlit
 streamlit run advanced_filter/ui_streamlit.py
+
+#5) Ou se preferir rode Run.bat
 ```
 
 ---
