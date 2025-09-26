@@ -61,18 +61,18 @@ Em vez de fórmulas complexas, você define **regras de filtragem** (palavras, f
 
 ## 📌 Exemplo Real
 
-Imagine que você tem um arquivo com registros de incidentes em uma fábrica, contendo uma coluna de descrição textual.  
-Você pode aplicar o **Filtro Avançado** para identificar registros que contenham **palavras-chave críticas** como:
+Exemplo real:
 
-- "queda"  
-- "choque elétrico"  
-- "vazamento"  
-- "incêndio"  
+Quero todos os registros com “falha no motor”
 
-E ao mesmo tempo evitar falsos positivos:  
+❌ Mas não quando for no contexto de “teste de motor”
 
-- Incluir "luva" ou "mãos", **mas excluir** "contramão".  
-- Marcar como **hit** apenas quando "luva" aparecer **junto** de "EPI".  
+✅ Preciso considerar situações envolvendo o motor elétrico principal
+
+❌ E separar quando envolver “simulação”
+
+
+No Excel, isso significa tempo perdido, confusão de filtros e alto risco de erro. 
 
 Resultado: um novo Excel somente com as ocorrências relevantes para investigação e relatórios.
 
