@@ -91,7 +91,7 @@ Abra a aplicação: **[https://filtro-avancado.streamlit.app](https://filtro-ava
 
 ```bash
 # 1) Clone o repositório
-git clone https://github.com/SEU_USUARIO/FILTRO_AVANCADO.git
+git clone https://github.com/GuimaraesL/filtro_avancado_geral.git
 cd FILTRO_AVANCADO
 
 # 2) Crie e ative um ambiente virtual
