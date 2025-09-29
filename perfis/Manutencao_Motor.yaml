@@ -1,0 +1,21 @@
+version: basic-1
+name: Manutencao_Motor
+notes: null
+normalization:
+  lowercase: true
+  strip_accents: true
+window: 8
+require_context: true
+negative_wins_ties: true
+min_pos_to_include: 1
+min_neg_to_exclude: 1
+positives:
+- falha no motor
+- vibração excessiva
+- Queda de Pressão
+negatives:
+- teste de motor
+- simulação
+contexts:
+- motor elétrico principal
+- linha de produção 3

@@ -13,6 +13,7 @@ import streamlit as st
 
 from advanced_filter.logs.loggs import get_logger, bump_render_seq, mark_event, log_state
 from advanced_filter.ui.state import ensure_bootstrap
+from advanced_filter.ui.help_ui import render_help
 from advanced_filter.ui.controller import (
     is_excel_name,
     list_sheets_from_bytes,
@@ -79,8 +80,8 @@ def _tab_selector():
 with st.sidebar:
     st.header("Carregar (dados)")
     uploaded_file = st.file_uploader(
-        "CSV/Excel (opcional p/ Teste Rápido)",
-        type=["csv", "xlsx", "xls", "xlsm"],
+        "Carregue seu arquivo",
+        type=["csv", "xlsx", "xlsm"],
         key="__upload_file",
     )
 
@@ -252,11 +253,4 @@ elif active == "Resultado":
     render_result_tab()
 
 else:  # "Ajuda"
-    st.markdown(
-        """
-        **Dicas rápidas**
-        - A **fonte da configuração** (Perfil/YAML) fica na **barra lateral**.
-        - A **Coluna de texto** aparece na barra lateral após carregar um arquivo.
-        - Durante a execução, o **conteúdo anterior é ocultado** e o **download é desabilitado** até o fim.
-        """
-    )
+ render_help()
