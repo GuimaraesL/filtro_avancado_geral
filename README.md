@@ -4,23 +4,22 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/downloads)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/GuimaraesL/filtro_avancado_geral/blob/master/LICENSE)
 
-> **Filtro Avançado** é um app em **Streamlit** para **filtragem inteligente e configurável** de bases de texto (CSV/Excel). Você cria **perfis** com termos **positivos**/**negativos** e **contexto**; o motor analisa uma **janela de tokens** (proximidade) ao redor do contexto e classifica cada registro em **INCLUIR**, **REVISAR** ou **EXCLUIR**. É possível testar rapidamente e exportar resultados limpos para análise.
+> **Filtro Avançado** é um aplicativo em **Streamlit** para **filtragem inteligente e configurável** de bases de texto (planilhas CSV/Excel). Ele permite criar **regras flexíveis** de inclusão/expulsão por palavras-chave, contextos e exceções (anti-padrões), testá-las rapidamente e **exportar os resultados** em planilhas limpas para análise e reporte.
 
 ---
 
 ## 🧭 Sumário
 - [Visão Geral](#-visão-geral)
 - [Principais Recursos](#-principais-recursos)
-- [Como Funciona (decisão do motor)](#-como-funciona-decisão-do-motor)
-- [Opções do Perfil](#-opções-do-perfil)
+- [Como Funciona](#-como-funciona)
 - [Exemplo Real](#-exemplo-real)
 - [Comece Agora](#-comece-agora)
   - [Usar no Navegador (Deploy Streamlit)](#usar-no-navegador-deploy-streamlit)
   - [Instalar e Rodar Localmente](#-instalar-e-rodar-localmente)
 - [Estrutura do Projeto](#-estrutura-do-projeto)
-- [Fluxos (Mermaid)](#-fluxos-mermaid)
+- [Gráficos Mermaid](#-gráficos-mermaid)
 - [Boas Práticas de Configuração](#-boas-práticas-de-configuração)
-- [Exportação](#-exportação)
+- [Exportação e Relatórios](#-exportação-e-relatórios)
 - [Perguntas Frequentes](#-perguntas-frequentes)
 - [Roadmap](#-roadmap)
 - [Contribuindo](#-contribuindo)
@@ -30,126 +29,86 @@
 
 ## 🔎 Visão Geral
 
-O **Filtro Avançado** acelera a análise de **registros textuais** (manutenção, incidentes, qualidade, suporte etc.).  
-Em vez de fórmulas complexas, você define **perfis** com:
-- **include** (positivos),
-- **exclude** (negativos),
-- **context** (âncora do cenário),
-
-e configura **como** o motor conta **palavras positivas/negativas por proximidade** (janela de tokens) para decidir entre **INCLUIR**, **REVISAR** ou **EXCLUIR**.
+O **Filtro Avançado** nasceu para acelerar a análise de **registros textuais** (ex.: ocorrências, relatórios, logs, descrições de incidentes, pedidos de manutenção).  
+Em vez de fórmulas complexas, você define **regras de filtragem** (palavras, frases, stems, *wildcards*, e **exceções**) e acompanha **em tempo real** os resultados: contagens, amostras e planilhas para download.
 
 ---
 
 ## 🚀 Principais Recursos
 
-- **UI em Streamlit**: suba CSV/Excel, selecione a coluna de texto e rode.  
-- **Perfis configuráveis**: listas de **include/exclude/context** + opções **minúscula/acentos/exigir_contexto/janela_token/min_positivos/min_negativos**.  
-- **Contexto como âncora**: a janela de tokens abre **ao redor do contexto** para contar sinais positivos/negativos.  
-- **Teste Rápido**: um **atalho opcional** para validar frases e ajustar o perfil com agilidade.  
-- **Resultados claros**: separação por **INCLUIR/REVISAR/EXCLUIR**, contagens e amostras explicáveis.  
-- **Exportação**: planilhas prontas para auditoria, BI e reporte.  
-- **Reprodutível**: perfis podem ser exportados (YAML) e versionados.
+- **Interface intuitiva em Streamlit**: carregue CSV/Excel e configure tudo pela UI.  
+- **Regras flexíveis**: listas de termos de **INCLUSÃO** e **EXCLUSÃO** (anti-padrões), com suporte a variações e pluralizações.  
+- **Contexto**: combine termos para reduzir falsos positivos (ex.: “luva” **e** “EPI”).  
+- **Teste Rápido**: escreva uma frase e veja se/por que ela “bate” nas regras.  
+- **Execução guiada**: botões claros, guia de **Resultados** e arquivos prontos para baixar.  
+- **Exportação**: resultados segmentados (full, hits, não-hits, auditoria).  
+- **Performance**: processamento vetorizado com pandas e *caching* inteligente.  
+- **Reprodutível**: regras salvas e reutilizáveis (YAML/JSON).  
 
 ---
 
-## 🧠 Como Funciona (decisão do motor)
+## 🧠 Como Funciona
 
-1. **Pré-processamento**  
-   Aplica as normalizações do perfil: **minúscula** (casefold) e **acentos** (ex.: “pressão” ≈ “pressao”).
+1. **Ingestão**: você carrega um CSV/Excel e escolhe a coluna de texto alvo.  
+2. **Configuração**: define regras de **inclusão**, **exclusão**, e **contextos** opcionais.  
+3. **Processamento**: o motor aplica normalização (minúsculas, *strip*, remoção de ruído opcional), avalia regras e marca *hits*.  
+4. **Validação**: use o **Teste Rápido** para checar frases e depurar regras.  
+5. **Resultados**: visualize contagens, amostras e baixe as planilhas finais.  
 
-2. **Contexto (âncora)**  
-   - Se **exigir_contexto = true**, é necessário encontrar **≥ 1** termo de `context` no texto para que **INCLUIR** seja possível.  
-   - Mesmo com `exigir_contexto = false`, o **contexto** pode ser usado como **âncora** para abrir a janela de tokens.
-
-3. **Janela de tokens (proximidade)**  
-   Ao redor de cada ocorrência de **contexto**, abre-se uma janela de tamanho `janela_token`.  
-   Dentro dessa janela o motor **conta**: **positivos** (termos de `include`) e **negativos** (termos de `exclude`).
-
-4. **Regras de decisão**  
-   - Se **negativos ≥ min_negativos** → **EXCLUIR**  
-   - Senão, se **positivos ≥ min_positivos** → **INCLUIR**  
-   - Caso contrário → **REVISAR** (ambiguidade / sinais insuficientes)
-
-> *Alguns perfis podem definir “excludes fortes” (termos críticos) que disparem **EXCLUIR** direto.*
-
----
-
-## ⚙️ Opções do Perfil
-
-| Opção              | Tipo  | Descrição |
-|--------------------|-------|-----------|
-| `minuscula`        | bool  | Normaliza caixa (ignora maiúsculas/minúsculas). |
-| `acentos`          | bool  | Normaliza diacríticos (ex.: “pressão” ≈ “pressao”). |
-| `exigir_contexto`  | bool  | Se **true**, requer **≥ 1** termo de `context` para **INCLUIR**. |
-| `janela_token`     | int   | Tamanho da janela (em tokens/palavras) ao redor do contexto usada para contagem. |
-| `min_positivos`    | int   | Mínimo de **positivos** (include) na janela para **INCLUIR**. |
-| `min_negativos`    | int   | Mínimo de **negativos** (exclude) na janela para **EXCLUIR**. |
-
-**Listas do perfil:**
-- `include` → **positivos** (contam a favor de INCLUIR)  
-- `exclude` → **negativos** (contam a favor de EXCLUIR; alguns podem excluir direto)  
-- `context` → **âncora** que abre a janela e, se exigido, habilita INCLUIR
-
-**Exemplo (ilustrativo):**
-```yaml
-minuscula: true
-acentos: true
-exigir_contexto: true
-janela_token: 8
-min_positivos: 1
-min_negativos: 1
-
-include:
-  - "falha no motor"
-  - "vibração excessiva"
-  - "queda de pressão"
-
-exclude:
-  - "teste de motor"
-  - "simulação"
-
-context:
-  - "motor elétrico principal"
-  - "linha de produção 3"
-```
+> A lógica foca em **clareza e auditabilidade**. Cada registro filtrado pode ser explicado por qual regra o capturou (quando auditoria está ativa).
 
 ---
 
 ## 📌 Exemplo Real
 
-- Quero **capturar** “falha no motor”.  
-- **Excluir** quando for “teste de motor”.  
-- **Âncorar** no “motor elétrico principal”.  
-- Se houver **simulação** perto do contexto, **não** devo incluir direto.
+Exemplo real:
 
-**Caso exemplar:**  
-`"simulação de falha no motor1"` → **REVISAR** (ambiguidade no entorno do contexto).
+Quero todos os registros com “falha no motor”
+
+❌ Mas não quando for no contexto de “teste de motor”
+
+✅ Preciso considerar situações envolvendo o motor elétrico principal
+
+❌ E separar quando envolver “simulação”
+
+
+No Excel, isso significa tempo perdido, confusão de filtros e alto risco de erro. 
+
+Resultado: um novo Excel somente com as ocorrências relevantes para investigação e relatórios.
 
 ---
 
 ## ✳️ Comece Agora
 
 ### Usar no Navegador (Deploy Streamlit)
-Abra: **https://filtro-avancado.streamlit.app**  
-> Faça upload da planilha, selecione a coluna de texto, escolha o perfil e rode. O **Teste Rápido** é um **atalho opcional** para ajustar o perfil mais depressa.
+
+Abra a aplicação: **[https://filtro-avancado.streamlit.app](https://filtro-avancado.streamlit.app)**  
+> Não precisa instalar nada. Faça upload da planilha, configure as regras e exporte os resultados.
 
 ### Instalar e Rodar Localmente
-Requisitos: **Python 3.10+** (64-bit), `pip`, `venv`.
+
+**Requisitos**: Python 3.10+ (64-bit recomendado), `pip` e virtualenv.  
+
 ```bash
+# 1) Clone o repositório
 git clone https://github.com/GuimaraesL/filtro_avancado_geral.git
 cd FILTRO_AVANCADO
 
+# 2) Crie e ative um ambiente virtual
 python -m venv .venv
 # Windows
-.venv\Scriptsctivate
+.venv\Scripts\activate
 # macOS/Linux
 source .venv/bin/activate
 
+# 3) Instale as dependências
 pip install -U pip
 pip install -r requirements.txt
 
+# 4) Rode o app Streamlit
 streamlit run advanced_filter/ui_streamlit.py
-# ou use o Run.bat do projeto
+
+#5) Ou se preferir rode Run.bat
 ```
 
 ---
@@ -159,112 +118,136 @@ streamlit run advanced_filter/ui_streamlit.py
 ```
 FILTRO_AVANCADO/
 ├─ advanced_filter/
-│  ├─ engine/                 # Lógica de filtragem (normalização, janela de tokens, decisão)
+│  ├─ engine/                 # Lógica de filtragem (normalização, matching, contexto, auditoria)
 │  ├─ data/                   # Exemplos e assets
 │  ├─ ui_streamlit.py         # Interface Streamlit
-│  ├─ config/                 # Perfis salvos (YAML exportados)
+│  ├─ config/                 # Regras salvas (YAML/JSON)
 │  └─ utils/                  # Funções auxiliares
 ├─ tests/                     # Testes unitários
 ├─ requirements.txt
-├─ pyproject.toml / setup.cfg
+├─ pyproject.toml / setup.cfg # (opcional) instalação como pacote
 └─ README.md
 ```
 
 ---
 
-## 📊 Fluxos (Mermaid)
+## 📊 Gráficos Mermaid
 
 ### Fluxo de Alto Nível
 ```mermaid
 flowchart LR
     A[Upload CSV/Excel] --> B[Selecionar Coluna de Texto]
-    B --> C[Escolher Perfil<br/>include/exclude/context + opções]
+    B --> C[Configurar Regras<br/>Inclusão/Exclusão/Contexto]
     C --> D[Processar]
-    D --> E{Usar Teste Rápido?}
-    E -- Sim --> F[Validar Frases e Ajustar Perfil]
-    E -- Não --> G[Resultados]
+    D --> E{Teste Rápido?}
+    E -- Sim --> F[Depurar Regras]
+    E -- Não --> G[Resultados & Métricas]
     G --> H[Exportar Planilhas]
 ```
 
-### Decisão do Motor (com janela de tokens)
+### Sequência de Execução
 ```mermaid
-flowchart TD
-    P[Pré-processamento<br/>minúscula/acentos] --> CTX{Contexto encontrado?}
-    CTX -- exigir_contexto=true e não encontrado --> R2[REVISAR]
-    CTX -- encontrado --> J[Janela de tokens ao redor do contexto]
-    J --> C[Contagem: Positivos vs Negativos]
-    C --> D{negativos ≥ min_negativos?}
-    D -- Sim --> R3[EXCLUIR]
-    D -- Não --> E{positivos ≥ min_positivos?}
-    E -- Sim --> R1[INCLUIR]
-    E -- Não --> R2[REVISAR]
+sequenceDiagram
+    actor U as Usuário
+    participant UI as UI Streamlit
+    participant ENG as Motor de Filtro
+    participant FS as Sistema de Arquivos
+
+    U->>UI: Upload Planilha / Escolhe Coluna
+    U->>UI: Define Regras (inclui, exclui, contexto)
+    UI->>ENG: Normaliza texto & aplica regras
+    ENG-->>UI: Marca "hits", contagens, amostras
+    U->>UI: Teste Rápido (frase)
+    UI->>ENG: Validar frase contra regras
+    ENG-->>UI: Explicação de quais regras bateram
+    U->>UI: Exportar
+    UI->>FS: Gerar arquivos (full/hits/auditoria)
+    FS-->>U: Downloads
+```
+
+### Inclusão x Exclusão
+```mermaid
+graph TD
+    INC[INCLUSÃO] -->|captura| TEXTO[Texto Avaliado]
+    EXC[EXCLUSÃO] -->|anula| TEXTO
+    CTX[CONTEXTO] -->|refina| INC
+    TEXTO -->|resultado| OUT[Hit / Não Hit]
 ```
 
 ---
 
 ## ✅ Boas Práticas de Configuração
 
-- **Especifique contexto** para reduzir falsos positivos (ex.: “motor elétrico principal”).  
-- **Ajuste a janela** (`janela_token`) conforme a densidade de termos no seu texto.  
-- **Calibre mínimos** (`min_positivos`/`min_negativos`) para o seu caso; aumente se houver ruído, reduza se estiver perdendo casos bons.  
-- **Inclua variações frequentes** no include/exclude (com ou sem acentos, siglas, pluralizações).  
-- **Use o Teste Rápido** como **atalho** para iterar mais rápido nos ajustes (opcional).
+- **Especifique exceções** para reduzir falsos positivos (ex.: capturar “mão”/“mãos” mas **excluir** “contramão”).  
+- **Contexto**: combine termos (ex.: `luva` **E** `EPI`) para sinalizar ocorrências realmente relevantes.  
+- **Normalização**: mantenha tudo minúsculo e sem acentos quando possível para aumentar *recall*.  
+- **Teste Rápido**: sempre valide uma amostra de frases típicas antes de processar tudo.  
+
+Exemplo YAML:
+```yaml
+include:
+  - "mão"
+  - "mãos"
+  - "dedo*"
+exclude:
+  - "contramão"
+context_any:
+  - "EPI"
+  - "proteção"
+context_all: []
+```
 
 ---
 
-## 📤 Exportação
+## 📤 Exportação e Relatórios
 
-A guia **Resultados** disponibiliza, conforme o perfil e a execução:
-- **INCLUIR**: registros com sinais positivos suficientes.  
-- **REVISAR**: casos ambíguos/limítrofes (para auditoria).  
-- **EXCLUIR**: registros com sinais negativos suficientes (ou excludes fortes).  
-- **Logs/Auditoria** (quando habilitado): explicações de quais termos & janelas motivaram a decisão.
+Ao finalizar o processamento, a guia **Resultados** disponibiliza:
+- **Full**: base original com colunas auxiliares (marcação de *hit*, regra, etc.).  
+- **Hits**: somente registros capturados.  
+- **No-Hits**: registros não capturados.  
+- **Auditoria**: mapeamento “registro → regra(s) que bateram)”.  
 
 ---
 
 ## ❓ Perguntas Frequentes
 
-**1) Preciso criar arquivo YAML manualmente?**  
-Não. Você cria/perfila **no app** (guia **Perfis**) e pode **exportar** para `.yaml` (útil para versionar/compartilhar).
+**1) O app roda offline?**  
+Sim, localmente ele roda offline após instalar dependências.  
 
-**2) Tokens são liga/desliga?**  
-Não. “Tokens” se referem à **janela de proximidade** definida por `janela_token`, onde o motor **conta** positivos (`include`) e negativos (`exclude`). Você controla **tamanho da janela** e **mínimos** (`min_positivos`/`min_negativos`).
+**2) Quais formatos de arquivo?**  
+`.csv`, `.xlsx`.  
 
-**3) E os acentos e maiúsculas?**  
-O perfil define isso: **minúscula** ignora caixa; **acentos** normaliza diacríticos (ex.: “pressão” ~ “pressao”).
+**3) Dá para salvar e reutilizar regras?**  
+Sim, exporte/import YAML/JSON de regras via UI.  
 
-**4) Por que “simulação de falha no motor1” cai em REVISAR?**  
-Porque, embora haja sinal positivo (“falha no motor”), o **entorno** contém “simulação” próximo ao **contexto**, gerando **ambiguidade**; não atinge critérios claros de incluir nem de excluir.
-
-**5) Posso usar o mesmo perfil em planilhas diferentes?**  
-Sim, desde que a lógica faça sentido para o novo conjunto. Perfis por área/equipamento costumam ser mais precisos.
+**4) Como evitar falsos positivos com “luva”?**  
+Use **contexto** (`luva` + `EPI`) e **exceções** (`contramão`).  
 
 ---
 
 ## 🗺 Roadmap
 
-- [ ] Perfis com “excludes fortes” configuráveis via UI.  
+- [ ] Regras com expressões regulares.  
+- [ ] Dicionário de sinônimos e *stemming*.  
+- [ ] Modo lote (vários arquivos).  
 - [ ] Painel de métricas (tendências, KPIs).  
-- [ ] Execução em lote (vários arquivos).  
-- [ ] Exportação adicional (JSON/Parquet).  
-- [ ] Regras avançadas (regex, stemming/sinônimos).
+- [ ] Exportação JSON/Parquet.  
 
 ---
 
 ## 🤝 Contribuindo
 
-- Leia o [README do repositório](https://github.com/GuimaraesL/filtro_avancado_geral).  
-- Abra uma **issue** com sua sugestão/bug.  
-- Envie um **PR** com melhorias e testes.
+Sugestões de melhorias, correções e novas funcionalidades são bem-vindas!  
+Abra uma issue ou envie um pull request no repositório oficial.  
 
 ---
 
 ## 📄 Licença
 
-MIT License — veja `LICENSE`.
+Este projeto está licenciado sob a **MIT License**.  
+Veja `LICENSE` para mais detalhes.  
 
 ---
 
 ### 💡 Dúvidas?
-- Deploy: **https://filtro-avancado.streamlit.app**  
-- Contato: **autguim@outlook.com**
+Abra uma issue ou acesse o **[Deploy no Streamlit](https://filtro-avancado.streamlit.app)**.
